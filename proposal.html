@@ -235,6 +235,26 @@
     when packing objects together.
   </p>
 
+  <p>To address these issues, we leverage two fundamental geometric energies:</p>
+  <ul>
+    <li><strong>Shell Energy ($W$):</strong> Models the physical elastic cost of stretching and bending, ensuring the object maintains its reference shape.</li>
+    <li><strong>Repulsive Energy ($\Phi$):</strong> Provides a long-range potential that acts as a collision shield, preventing self-intersections.</li>
+  </ul>
+
+  <h3>Elastic Shell Energy</h3>
+  <p>
+    The total elastic shell energy $W(x, \tilde{x})$ measures the physical "strain" or cost of deforming a reference mesh $x$ into a new configuration $\tilde{x}$.
+    It is the sum of membrane and bending energies:
+    $$W(x, \tilde{x}) = W_{\text{membrane}}(x, \tilde{x}) + W_{\text{bending}}(x, \tilde{x})$$
+  </p>
+  <p>
+    The discrete membrane energy accounts for tangential stretching and shearing via a Neo-Hookean model:
+    $$W_{\text{membrane}}(x, \tilde{x}) = \sum_{t \in T} a_t W_{\text{nh}}(I_t^{-1} \tilde{I}_t)$$
+    where $I_t^{-1} \tilde{I}_t$ is the Cauchy-Green strain tensor and $a_t$ is the triangle area. The discrete bending energy measures the change in dihedral angles across edges:
+    $$W_{\text{bending}}(x, \tilde{x}) = 8 \sum_{e \in E_{\text{int}}} \frac{\ell_e^2}{a_e} (\tan(\theta_e/2) - \tan(\tilde{\theta}_e/2))^2$$
+    where $\ell_e$ is the edge length, $a_e$ is the associated area, and $\theta_e, \tilde{\theta}_e$ are the dihedral angles.
+  </p>
+
   <p>
     The <strong>tangent-point energy</strong> (TPE) is a long-range repulsive
     potential integrated over all pairs of surface points, weighted so that
@@ -286,10 +306,25 @@
     acceleration, and Sobolev-preconditioned descent.
     <a href="https://doi.org/10.1145/3658174" target="_blank"><em>Repulsive Shells</em></a>
     (Sassen et al., 2024) goes further, building TPE into the Riemannian
-    metric of a shape space via a <strong>graph manifold</strong> so that
-    geodesic interpolation, extrapolation, and averaging are
-    intersection-free by construction. We implement ideas from both papers
-    and accelerate them on the GPU.
+    metric of a shape space via a <strong>graph manifold</strong>.
+  </p>
+
+  <h3>Graph Manifold Integration</h3>
+  <p>
+    The core contribution of this approach is integrating these energies into a new
+    <strong>graph manifold</strong>. Instead of simply adding the repulsive energy,
+    which would cause the shape to unnaturally expand to minimize total cost,
+    the framework penalizes the <em>change</em> in repulsive energy alongside the
+    physical strain of the elastic shell.
+  </p>
+  <p>
+    The squared distance between two geometric configurations $x$ and $y$ in the
+    Repulsive Shell space is defined as:
+    $$D_\Phi^2(x, y) := \hat{W}(x, y) + (\hat{\Phi}(x) - \hat{\Phi}(y))^2$$
+    where $\hat{W}(x, y)$ is the shell energy and $\hat{\Phi}$ is the repulsive potential.
+    This metric ensures that if points start close together, they can stay close,
+    but they can never cross the "infinite mountains" of self-intersection,
+    guaranteeing a physically realistic and collision-free trajectory.
   </p>
 </section>
 
@@ -584,33 +619,10 @@
 
 </div>
 
-<div id="inf-dot" style="position:fixed;width:8px;height:8px;border-radius:50%;background:var(--dot-color);z-index:0;pointer-events:none;transition:background 0.3s;"></div>
-
 <script>
-(function() {
-  var dot = document.getElementById('inf-dot');
-
-  function update() {
-    var max = document.body.scrollHeight - window.innerHeight;
-    if (max <= 0) return;
-    var frac = window.scrollY / max;
-    var t = frac * Math.PI * 2 - 1.34;
-    var d = 1 + Math.sin(t) * Math.sin(t);
-    var ax = window.innerWidth * 0.4;
-    var ay = window.innerHeight * 0.66;
-    dot.style.left = (window.innerWidth / 2 + (Math.cos(t) / d) * ax - 4) + 'px';
-    dot.style.top = (window.innerHeight / 2 + (Math.sin(t) * Math.cos(t) / d) * ay - 4) + 'px';
-    dot.style.opacity = 1 - frac * frac * frac;
-  }
-
-  window.addEventListener('scroll', update);
-  window.addEventListener('resize', update);
-  update();
-
   document.getElementById('dark-toggle').addEventListener('click', function() {
     document.body.classList.toggle('dark');
   });
-})();
 </script>
 </body>
 </html>
