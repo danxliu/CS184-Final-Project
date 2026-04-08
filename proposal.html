@@ -1,628 +1,976 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Limitless: Infinity | CS 184 Final Project Proposal</title>
-<link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
-  onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
-<style>
-  :root {
-    --bg: #f0f2f5;
-    --surface: #e6e9ee;
-    --border: #cdd2d9;
-    --text: #1e2a38;
-    --text-dim: #4a5568;
-    --label: #8896a7;
-    --nav-bg: rgba(240,242,245,0.9);
-    --dot-color: rgba(141,160,183,0.35);
-  }
-  .dark {
-    --bg: #191d24;
-    --surface: #21262e;
-    --border: #2e3440;
-    --text: #bfc5ce;
-    --text-dim: #8891a0;
-    --label: #5c6470;
-    --nav-bg: rgba(25,29,36,0.9);
-    --dot-color: rgba(90,105,125,0.3);
-  }
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Limitless: Infinity | CS 184 Final Project Proposal</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        />
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+            onload="
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                    ],
+                })
+            "
+        ></script>
+        <style>
+            :root {
+                --bg: #f0f2f5;
+                --surface: #e6e9ee;
+                --border: #cdd2d9;
+                --text: #1e2a38;
+                --text-dim: #4a5568;
+                --label: #8896a7;
+                --nav-bg: rgba(240, 242, 245, 0.9);
+                --dot-color: rgba(141, 160, 183, 0.35);
+            }
+            .dark {
+                --bg: #191d24;
+                --surface: #21262e;
+                --border: #2e3440;
+                --text: #bfc5ce;
+                --text-dim: #8891a0;
+                --label: #5c6470;
+                --nav-bg: rgba(25, 29, 36, 0.9);
+                --dot-color: rgba(90, 105, 125, 0.3);
+            }
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html {
+                scroll-behavior: smooth;
+            }
 
-  body {
-    font-family: 'Alegreya Sans', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.75;
-    font-size: 18.5px;
-    font-weight: 400;
-    -webkit-font-smoothing: antialiased;
-    transition: background 0.3s, color 0.3s;
-  }
+            body {
+                font-family: "Alegreya Sans", sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                line-height: 1.75;
+                font-size: 18.5px;
+                font-weight: 400;
+                -webkit-font-smoothing: antialiased;
+                transition:
+                    background 0.3s,
+                    color 0.3s;
+            }
 
-  ::selection { background: var(--text); color: var(--bg); }
+            ::selection {
+                background: var(--text);
+                color: var(--bg);
+            }
 
-  nav {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-    padding: 1rem 2rem;
-    display: flex; gap: 1.5rem; align-items: center;
-    background: var(--nav-bg);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    font-size: 0.82rem; letter-spacing: 0.03em;
-  }
-  nav a { color: var(--text-dim); text-decoration: none; transition: color 0.2s; }
-  nav a:hover { color: var(--text); }
-  nav .brand {
-    color: var(--text); font-weight: 500;
-    margin-right: auto; font-size: 0.85rem;
-  }
+            nav {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 100;
+                padding: 1rem 2rem;
+                display: flex;
+                gap: 1.5rem;
+                align-items: center;
+                background: var(--nav-bg);
+                backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--border);
+                font-size: 0.82rem;
+                letter-spacing: 0.03em;
+            }
+            nav a {
+                color: var(--text-dim);
+                text-decoration: none;
+                transition: color 0.2s;
+            }
+            nav a:hover {
+                color: var(--text);
+            }
+            nav .brand {
+                color: var(--text);
+                font-weight: 500;
+                margin-right: auto;
+                font-size: 0.85rem;
+            }
 
-  .hero {
-    min-height: 100vh;
-    display: flex; flex-direction: column; justify-content: center;
-    padding: 8rem 2rem 4rem;
-    max-width: 860px; margin: 0 auto;
-  }
-  .hero-label {
-    font-size: 0.75rem; color: var(--label);
-    letter-spacing: 0.15em; text-transform: uppercase;
-    margin-bottom: 1.5rem;
-  }
-  .hero h1 {
-    font-size: clamp(3rem, 8vw, 5.5rem);
-    line-height: 1.05; font-weight: 400;
-    margin-bottom: 1.5rem; letter-spacing: -0.02em;
-  }
-  .hero-sub {
-    font-size: 1.1rem; color: var(--text-dim);
-    max-width: 620px; line-height: 1.8; margin-bottom: 2.5rem;
-  }
-  .team { display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; }
-  .team-member { display: flex; flex-direction: column; gap: 0.15rem; }
-  .team-member .name { font-weight: 500; font-size: 0.95rem; }
-  .content { max-width: 740px; margin: 0 auto; padding: 0 2rem 6rem; }
-  section { margin-bottom: 5rem; }
+            .hero {
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding: 8rem 2rem 4rem;
+                max-width: 860px;
+                margin: 0 auto;
+            }
+            .hero-label {
+                font-size: 0.75rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 1.5rem;
+            }
+            .hero h1 {
+                font-size: clamp(3rem, 8vw, 5.5rem);
+                line-height: 1.05;
+                font-weight: 400;
+                margin-bottom: 1.5rem;
+                letter-spacing: -0.02em;
+            }
+            .hero-sub {
+                font-size: 1.1rem;
+                color: var(--text-dim);
+                max-width: 620px;
+                line-height: 1.8;
+                margin-bottom: 2.5rem;
+            }
+            .team {
+                display: flex;
+                gap: 2rem;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .team-member {
+                display: flex;
+                flex-direction: column;
+                gap: 0.15rem;
+            }
+            .team-member .name {
+                font-weight: 500;
+                font-size: 0.95rem;
+            }
+            .content {
+                max-width: 740px;
+                margin: 0 auto;
+                padding: 0 2rem 6rem;
+            }
+            section {
+                margin-bottom: 5rem;
+            }
 
-  .section-num {
-    font-size: 0.7rem; color: var(--label);
-    letter-spacing: 0.15em; text-transform: uppercase;
-    margin-bottom: 0.75rem;
-  }
-  h2 {
-    font-size: 2rem; font-weight: 400;
-    margin-bottom: 1.5rem; line-height: 1.2;
-  }
-  h3 {
-    font-size: 1rem; font-weight: 600;
-    margin-top: 2rem; margin-bottom: 0.75rem;
-  }
-  p { margin-bottom: 1.25rem; color: var(--text-dim); }
-  p strong { color: var(--text); font-weight: 500; }
-  a {
-    color: var(--text); text-decoration: underline;
-    text-decoration-color: var(--border);
-    text-underline-offset: 3px; transition: text-decoration-color 0.2s;
-  }
-  a:hover { text-decoration-color: var(--text); }
+            .section-num {
+                font-size: 0.7rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 0.75rem;
+            }
+            h2 {
+                font-size: 2rem;
+                font-weight: 400;
+                margin-bottom: 1.5rem;
+                line-height: 1.2;
+            }
+            h3 {
+                font-size: 1rem;
+                font-weight: 600;
+                margin-top: 2rem;
+                margin-bottom: 0.75rem;
+            }
+            p {
+                margin-bottom: 1.25rem;
+                color: var(--text-dim);
+            }
+            p strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            a {
+                color: var(--text);
+                text-decoration: underline;
+                text-decoration-color: var(--border);
+                text-underline-offset: 3px;
+                transition: text-decoration-color 0.2s;
+            }
+            a:hover {
+                text-decoration-color: var(--text);
+            }
 
-  p + .equation { margin-top: -0.5rem; }
-  .equation {
-    background: transparent; border: none;
-    padding: 0; margin: 0.75rem 0;
-    text-align: center; overflow: hidden;
-  }
-  .katex { font-size: 1em; }
-  .katex-display { margin: 0 !important; overflow: hidden !important; }
-  .katex-display .katex { font-size: 1.1em; }
+            p + .equation {
+                margin-top: -0.5rem;
+            }
+            .equation {
+                background: transparent;
+                border: none;
+                padding: 0;
+                margin: 0.75rem 0;
+                text-align: center;
+                overflow: hidden;
+            }
+            .katex {
+                font-size: 1em;
+            }
+            .katex-display {
+                margin: 0 !important;
+                overflow: hidden !important;
+            }
+            .katex-display .katex {
+                font-size: 1.1em;
+            }
 
-  .deliverable-group { margin: 1.5rem 0; }
-  .deliverable-group-title {
-    display: inline-block;
-    font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
-    padding: 0.3rem 0.7rem; border-radius: 2px; margin-bottom: 1rem;
-    background: transparent; color: var(--text);
-    border: 1px solid var(--border);
-  }
-  .deliverable-item {
-    display: flex; gap: 0.75rem; padding: 0.6rem 0;
-    border-bottom: 1px solid var(--border); align-items: flex-start;
-  }
-  .deliverable-item:last-child { border-bottom: none; }
-  .deliverable-bullet {
-    width: 6px; height: 6px; border-radius: 50%;
-    margin-top: 0.55rem; flex-shrink: 0;
-  }
-  .baseline .deliverable-bullet { background: var(--text); }
-  .aspirational .deliverable-bullet {
-    background: transparent; border: 1.5px solid var(--text-dim);
-  }
-  .deliverable-text { font-size: 1rem; color: var(--text-dim); line-height: 1.65; }
+            .deliverable-group {
+                margin: 1.5rem 0;
+            }
+            .deliverable-group-title {
+                display: inline-block;
+                font-size: 0.72rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                padding: 0.3rem 0.7rem;
+                border-radius: 2px;
+                margin-bottom: 1rem;
+                background: transparent;
+                color: var(--text);
+                border: 1px solid var(--border);
+            }
+            .deliverable-item {
+                display: flex;
+                gap: 0.75rem;
+                padding: 0.6rem 0;
+                border-bottom: 1px solid var(--border);
+                align-items: flex-start;
+            }
+            .deliverable-item:last-child {
+                border-bottom: none;
+            }
+            .deliverable-bullet {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                margin-top: 0.55rem;
+                flex-shrink: 0;
+            }
+            .baseline .deliverable-bullet {
+                background: var(--text);
+            }
+            .aspirational .deliverable-bullet {
+                background: transparent;
+                border: 1.5px solid var(--text-dim);
+            }
+            .deliverable-text {
+                font-size: 1rem;
+                color: var(--text-dim);
+                line-height: 1.65;
+            }
 
-  .schedule { margin: 1.5rem 0; }
-  .week {
-    display: grid; grid-template-columns: 90px 1fr; gap: 1.5rem;
-    padding: 1.25rem 0; border-bottom: 1px solid var(--border);
-  }
-  .week:last-child { border-bottom: none; }
-  .week-label {
-    font-size: 0.78rem; color: var(--text); padding-top: 0.1rem;
-  }
-  .week-content { font-size: 1rem; color: var(--text-dim); line-height: 1.7; }
-  .week-content strong { color: var(--text); font-weight: 500; }
+            .schedule {
+                margin: 1.5rem 0;
+            }
+            .week {
+                display: grid;
+                grid-template-columns: 90px 1fr;
+                gap: 1.5rem;
+                padding: 1.25rem 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .week:last-child {
+                border-bottom: none;
+            }
+            .week-label {
+                font-size: 0.78rem;
+                color: var(--text);
+                padding-top: 0.1rem;
+            }
+            .week-content {
+                font-size: 1rem;
+                color: var(--text-dim);
+                line-height: 1.7;
+            }
+            .week-content strong {
+                color: var(--text);
+                font-weight: 500;
+            }
 
-  .resource-list { margin: 1rem 0; }
-  .resource { padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
-  .resource:last-child { border-bottom: none; }
-  .resource-title { font-size: 0.92rem; color: var(--text); font-weight: 500; }
-  .resource-desc { font-size: 0.82rem; color: var(--text-dim); margin-top: 0.2rem; }
+            .resource-list {
+                margin: 1rem 0;
+            }
+            .resource {
+                padding: 0.75rem 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .resource:last-child {
+                border-bottom: none;
+            }
+            .resource-title {
+                font-size: 0.92rem;
+                color: var(--text);
+                font-weight: 500;
+            }
+            .resource-desc {
+                font-size: 0.82rem;
+                color: var(--text-dim);
+                margin-top: 0.2rem;
+            }
 
-  .card-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0; }
-  .card {
-    background: transparent; border: 1px solid var(--border);
-    border-radius: 3px; padding: 1.25rem 1.5rem;
-  }
-  .card .card-label {
-    font-size: 0.68rem; color: var(--label);
-    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.4rem;
-  }
-  .card .card-value { font-size: 0.92rem; color: var(--text); line-height: 1.5; }
+            .card-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+                margin: 1.5rem 0;
+            }
+            .card {
+                background: transparent;
+                border: 1px solid var(--border);
+                border-radius: 3px;
+                padding: 1.25rem 1.5rem;
+            }
+            .card .card-label {
+                font-size: 0.68rem;
+                color: var(--label);
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                margin-bottom: 0.4rem;
+            }
+            .card .card-value {
+                font-size: 0.92rem;
+                color: var(--text);
+                line-height: 1.5;
+            }
 
-  .divider {
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--border), transparent);
-    margin: 4rem 0;
-  }
+            .divider {
+                height: 1px;
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    var(--border),
+                    transparent
+                );
+                margin: 4rem 0;
+            }
 
-  @media (max-width: 640px) {
-    .card-row { grid-template-columns: 1fr; }
-    .week { grid-template-columns: 1fr; gap: 0.5rem; }
-    .team { flex-direction: column; gap: 1rem; }
-  }
-</style>
-</head>
-<body>
+            @media (max-width: 640px) {
+                .card-row {
+                    grid-template-columns: 1fr;
+                }
+                .week {
+                    grid-template-columns: 1fr;
+                    gap: 0.5rem;
+                }
+                .team {
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <span
+                class="brand"
+                id="dark-toggle"
+                style="cursor: pointer; line-height: 0"
+                ><svg
+                    width="24"
+                    height="14"
+                    viewBox="0 0 24 14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                >
+                    <path
+                        d="M12 7C12 4 9.5 1 6.5 1S1 4 1 7s2.5 6 5.5 6S12 10 12 7Zm0 0c0 3 2.5 6 5.5 6S23 10 23 7s-2.5-6-5.5-6S12 4 12 7Z"
+                    /></svg
+            ></span>
+            <a href="#problem">Problem</a>
+            <a href="#goals">Goals</a>
+            <a href="#schedule">Schedule</a>
+            <a href="#resources">Resources</a>
+        </nav>
 
-<nav>
-  <span class="brand" id="dark-toggle" style="cursor:pointer;line-height:0;"><svg width="24" height="14" viewBox="0 0 24 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 7C12 4 9.5 1 6.5 1S1 4 1 7s2.5 6 5.5 6S12 10 12 7Zm0 0c0 3 2.5 6 5.5 6S23 10 23 7s-2.5-6-5.5-6S12 4 12 7Z"/></svg></span>
-  <a href="#problem">Problem</a>
-  <a href="#goals">Goals</a>
-  <a href="#schedule">Schedule</a>
-  <a href="#resources">Resources</a>
-</nav>
+        <div class="hero">
+            <div class="hero-label">
+                CS 184 · Spring 2026 · Final Project Proposal
+            </div>
+            <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
+            <p class="hero-sub">
+                Implementing the tangent-point energy for triangle meshes, a
+                long-range repulsive potential that prevents self-intersection,
+                for collision-free shape optimization, interpolation, and
+                modeling, accelerated on the GPU.
+            </p>
+            <div class="team">
+                <span
+                    style="
+                        color: var(--text-dim);
+                        font-size: 0.95rem;
+                        font-weight: 500;
+                    "
+                    >Group Members:</span
+                >
+                <div class="team-member">
+                    <span class="name">Atharv Sampath</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Michael Pham</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Daniel Liu</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Elen Papyan</span>
+                </div>
+            </div>
+        </div>
 
-<div class="hero">
-  <div class="hero-label">CS 184 · Spring 2026 · Final Project Proposal</div>
-  <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
-  <p class="hero-sub">
-    Implementing the tangent-point energy for triangle meshes, a long-range
-    repulsive potential that prevents self-intersection, for collision-free
-    shape optimization, interpolation, and modeling, accelerated on the GPU.
-  </p>
-  <div class="team">
-    <span style="color:var(--text-dim); font-size:0.95rem; font-weight:500;">Group Members:</span>
-    <div class="team-member">
-      <span class="name">Atharv Sampath</span>
-    </div>
-    <div class="team-member">
-      <span class="name">Michael Pham</span>
-    </div>
-    <div class="team-member">
-      <span class="name">Daniel Liu</span>
-    </div>
-    <div class="team-member">
-      <span class="name">Elen Papyan</span>
-    </div>
-  </div>
-</div>
+        <div class="content">
+            <section id="problem">
+                <div class="section-num">01 — Problem</div>
+                <h2>Self-intersection in triangle meshes</h2>
 
-<div class="content">
+                <p>
+                    Standard collision handling is reactive: detect
+                    near-overlapping triangles, then push them apart locally.
+                    This offers no global guidance. It cannot steer geometry
+                    proactively away from contact, guarantee that a shape
+                    interpolation stays intersection-free, or distribute gap
+                    sizes uniformly when packing objects together.
+                </p>
 
-<section id="problem">
-  <div class="section-num">01 — Problem</div>
-  <h2>Self-intersection in triangle meshes</h2>
+                <p>
+                    To address these issues, we leverage two fundamental
+                    geometric energies:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Shell Energy ($W$):</strong> Models the physical
+                        elastic cost of stretching and bending, ensuring the
+                        object maintains its reference shape.
+                    </li>
+                    <li>
+                        <strong>Repulsive Energy ($\Phi$):</strong> Provides a
+                        long-range potential that acts as a collision shield,
+                        preventing self-intersections.
+                    </li>
+                </ul>
 
-  <p>
-    Standard collision handling is reactive: detect near-overlapping triangles,
-    then push them apart locally. This offers no global guidance. It cannot
-    steer geometry proactively away from contact, guarantee that a shape
-    interpolation stays intersection-free, or distribute gap sizes uniformly
-    when packing objects together.
-  </p>
+                <h3>Elastic Shell Energy</h3>
+                <p>
+                    The total elastic shell energy $W(x, \tilde{x})$ measures
+                    the physical "strain" or cost of deforming a reference mesh
+                    $x$ into a new configuration $\tilde{x}$. It is the sum of
+                    membrane and bending energies: $$W(x, \tilde{x}) =
+                    W_{\text{membrane}}(x, \tilde{x}) + W_{\text{bending}}(x,
+                    \tilde{x})$$
+                </p>
+                <p>
+                    The discrete membrane energy accounts for tangential
+                    stretching and shearing via a Neo-Hookean model:
+                    $$W_{\text{membrane}}(x, \tilde{x}) = \sum_{t \in T} a_t
+                    W_{\text{nh}}(I_t^{-1} \tilde{I}_t)$$ where $I_t^{-1}
+                    \tilde{I}_t$ is the Cauchy-Green strain tensor and $a_t$ is
+                    the triangle area. The discrete bending energy measures the
+                    change in dihedral angles across edges:
+                    $$W_{\text{bending}}(x, \tilde{x}) = 8 \sum_{e \in
+                    E_{\text{int}}} \frac{\ell_e^2}{a_e} (\tan(\theta_e/2) -
+                    \tan(\tilde{\theta}_e/2))^2$$ where $\ell_e$ is the edge
+                    length, $a_e$ is the associated area, and $\theta_e,
+                    \tilde{\theta}_e$ are the dihedral angles.
+                </p>
 
-  <p>To address these issues, we leverage two fundamental geometric energies:</p>
-  <ul>
-    <li><strong>Shell Energy ($W$):</strong> Models the physical elastic cost of stretching and bending, ensuring the object maintains its reference shape.</li>
-    <li><strong>Repulsive Energy ($\Phi$):</strong> Provides a long-range potential that acts as a collision shield, preventing self-intersections.</li>
-  </ul>
+                <p>
+                    The <strong>tangent-point energy</strong> (TPE) is a
+                    long-range repulsive potential integrated over all pairs of
+                    surface points, weighted so that points close in space but
+                    far along the surface repel strongly. TPE diverges to
+                    infinity at self-intersection, penalizes bending, and
+                    distributes curvature evenly.
+                </p>
 
-  <h3>Elastic Shell Energy</h3>
-  <p>
-    The total elastic shell energy $W(x, \tilde{x})$ measures the physical "strain" or cost of deforming a reference mesh $x$ into a new configuration $\tilde{x}$.
-    It is the sum of membrane and bending energies:
-    $$W(x, \tilde{x}) = W_{\text{membrane}}(x, \tilde{x}) + W_{\text{bending}}(x, \tilde{x})$$
-  </p>
-  <p>
-    The discrete membrane energy accounts for tangential stretching and shearing via a Neo-Hookean model:
-    $$W_{\text{membrane}}(x, \tilde{x}) = \sum_{t \in T} a_t W_{\text{nh}}(I_t^{-1} \tilde{I}_t)$$
-    where $I_t^{-1} \tilde{I}_t$ is the Cauchy-Green strain tensor and $a_t$ is the triangle area. The discrete bending energy measures the change in dihedral angles across edges:
-    $$W_{\text{bending}}(x, \tilde{x}) = 8 \sum_{e \in E_{\text{int}}} \frac{\ell_e^2}{a_e} (\tan(\theta_e/2) - \tan(\tilde{\theta}_e/2))^2$$
-    where $\ell_e$ is the edge length, $a_e$ is the associated area, and $\theta_e, \tilde{\theta}_e$ are the dihedral angles.
-  </p>
+                <p>
+                    For an immersion $f: M \to \mathbb{R}^3$ of a closed surface
+                    $M$, the continuous TPE is
+                </p>
 
-  <p>
-    The <strong>tangent-point energy</strong> (TPE) is a long-range repulsive
-    potential integrated over all pairs of surface points, weighted so that
-    points close in space but far along the surface repel strongly. TPE
-    diverges to infinity at self-intersection, penalizes bending, and
-    distributes curvature evenly.
-  </p>
+                <div class="equation">
+                    $$E_\alpha(f) = \int_M \int_M \frac{|\langle N_f(x),\, f(x)
+                    - f(y) \rangle|^\alpha}{|f(x) - f(y)|^{2\alpha}} \, dA_x \,
+                    dA_y$$
+                </div>
 
-  <p>
-    For an immersion $f: M \to \mathbb{R}^3$ of a closed surface $M$, the
-    continuous TPE is
-  </p>
+                <p>
+                    where $N_f(x)$ is the unit normal at $x$, $dA$ is the area
+                    element, and $\alpha > 1$ controls repulsion strength. The
+                    numerator measures how much the vector from $y$ to $x$
+                    deviates from the tangent plane at $x$: for nearby points on
+                    a smooth region, $\langle N_f(x), f(x) - f(y) \rangle
+                    \approx 0$ and the integrand is small. When two distant
+                    patches of surface approach each other, this quantity grows
+                    and the energy diverges. TPE is finite if and only if $f$ is
+                    an embedding (Strzelecki and von der Mosel, 2013).
+                </p>
 
-  <div class="equation">
-    $$E_\alpha(f) = \int_M \int_M \frac{|\langle N_f(x),\, f(x) - f(y) \rangle|^\alpha}{|f(x) - f(y)|^{2\alpha}} \, dA_x \, dA_y$$
-  </div>
+                <p>
+                    For a triangle mesh with $n$ faces, the discrete energy
+                    approximates the double integral via midpoint quadrature
+                    over triangle pairs:
+                </p>
 
-  <p>
-    where $N_f(x)$ is the unit normal at $x$, $dA$ is the area element, and
-    $\alpha > 1$ controls repulsion strength. The numerator measures how much
-    the vector from $y$ to $x$ deviates from the tangent plane at $x$: for
-    nearby points on a smooth region, $\langle N_f(x), f(x) - f(y) \rangle
-    \approx 0$ and the integrand is small. When two distant patches of surface
-    approach each other, this quantity grows and the energy diverges. TPE is
-    finite if and only if $f$ is an embedding (Strzelecki and von der Mosel, 2013).
-  </p>
+                <div class="equation">
+                    $$E_\alpha(f) \approx \sum_{i=1}^{n} \sum_{j=1}^{n}
+                    \frac{|\langle N_i,\, c_i - c_j \rangle|^\alpha}{|c_i -
+                    c_j|^{2\alpha}} \, A_i \, A_j$$
+                </div>
 
-  <p>
-    For a triangle mesh with $n$ faces, the discrete energy approximates
-    the double integral via midpoint quadrature over triangle pairs:
-  </p>
+                <p>
+                    where $c_i, N_i, A_i$ are the centroid, normal, and area of
+                    triangle $i$. The naive $O(n^2)$ sum is accelerated to $O(n
+                    \log n)$ using a Barnes-Hut style BVH that clusters distant
+                    triangles together. Optimization uses a fractional Sobolev
+                    inner product $H^{s}(M)$ (with $s = \alpha - 1$) as a
+                    preconditioner, which dramatically improves convergence
+                    compared to the $L^2$ gradient.
+                </p>
 
-  <div class="equation">
-    $$E_\alpha(f) \approx \sum_{i=1}^{n} \sum_{j=1}^{n} \frac{|\langle N_i,\, c_i - c_j \rangle|^\alpha}{|c_i - c_j|^{2\alpha}} \, A_i \, A_j$$
-  </div>
+                <p>
+                    <a href="https://doi.org/10.1145/3458756" target="_blank"
+                        ><em>Repulsive Surfaces</em></a
+                    >
+                    (Yu et al., 2021) develops this full pipeline:
+                    discretization, hierarchical acceleration, and
+                    Sobolev-preconditioned descent.
+                    <a href="https://doi.org/10.1145/3658174" target="_blank"
+                        ><em>Repulsive Shells</em></a
+                    >
+                    (Sassen et al., 2024) goes further, building TPE into the
+                    Riemannian metric of a shape space via a
+                    <strong>graph manifold</strong>.
+                </p>
 
-  <p>
-    where $c_i, N_i, A_i$ are the centroid, normal, and area of triangle $i$.
-    The naive $O(n^2)$ sum is accelerated to $O(n \log n)$ using a
-    Barnes-Hut style BVH that clusters distant triangles together.
-    Optimization uses a fractional Sobolev inner product
-    $H^{s}(M)$ (with $s = \alpha - 1$) as a preconditioner, which
-    dramatically improves convergence compared to the $L^2$ gradient.
-  </p>
+                <h3>Graph Manifold Integration</h3>
+                <p>
+                    The core contribution of this approach is integrating these
+                    energies into a new
+                    <strong>graph manifold</strong>. Instead of simply adding
+                    the repulsive energy, which would cause the shape to
+                    unnaturally expand to minimize total cost, the framework
+                    penalizes the <em>change</em> in repulsive energy alongside
+                    the physical strain of the elastic shell.
+                </p>
+                <p>
+                    The squared distance between two geometric configurations
+                    $x$ and $y$ in the Repulsive Shell space is defined as:
+                    $$D_\Phi^2(x, y) := \hat{W}(x, y) + (\hat{\Phi}(x) -
+                    \hat{\Phi}(y))^2$$ where $\hat{W}(x, y)$ is the shell energy
+                    and $\hat{\Phi}$ is the repulsive potential. This metric
+                    ensures that if points start close together, they can stay
+                    close, but they can never cross the "infinite mountains" of
+                    self-intersection, guaranteeing a physically realistic and
+                    collision-free trajectory.
+                </p>
+            </section>
 
-  <p>
-    <a href="https://doi.org/10.1145/3458756" target="_blank"><em>Repulsive Surfaces</em></a>
-    (Yu et al., 2021) develops this full pipeline: discretization, hierarchical
-    acceleration, and Sobolev-preconditioned descent.
-    <a href="https://doi.org/10.1145/3658174" target="_blank"><em>Repulsive Shells</em></a>
-    (Sassen et al., 2024) goes further, building TPE into the Riemannian
-    metric of a shape space via a <strong>graph manifold</strong>.
-  </p>
+            <div class="divider"></div>
 
-  <h3>Graph Manifold Integration</h3>
-  <p>
-    The core contribution of this approach is integrating these energies into a new
-    <strong>graph manifold</strong>. Instead of simply adding the repulsive energy,
-    which would cause the shape to unnaturally expand to minimize total cost,
-    the framework penalizes the <em>change</em> in repulsive energy alongside the
-    physical strain of the elastic shell.
-  </p>
-  <p>
-    The squared distance between two geometric configurations $x$ and $y$ in the
-    Repulsive Shell space is defined as:
-    $$D_\Phi^2(x, y) := \hat{W}(x, y) + (\hat{\Phi}(x) - \hat{\Phi}(y))^2$$
-    where $\hat{W}(x, y)$ is the shell energy and $\hat{\Phi}$ is the repulsive potential.
-    This metric ensures that if points start close together, they can stay close,
-    but they can never cross the "infinite mountains" of self-intersection,
-    guaranteeing a physically realistic and collision-free trajectory.
-  </p>
-</section>
+            <section id="goals">
+                <div class="section-num">02 — Goals &amp; Deliverables</div>
+                <h2>What we're making</h2>
 
-<div class="divider"></div>
+                <p>
+                    A C++/CUDA system that takes triangle meshes as input and
+                    produces intersection-free optimized or interpolated
+                    geometry as output. We evaluate on
+                    <strong>visual quality</strong> (do we reproduce results
+                    from the papers?), <strong>correctness</strong> (does the
+                    discrete energy converge under refinement?), and
+                    <strong>performance</strong> (how much does GPU acceleration
+                    buy us?).
+                </p>
 
-<section id="goals">
-  <div class="section-num">02 — Goals &amp; Deliverables</div>
-  <h2>What we're making</h2>
+                <div class="deliverable-group baseline">
+                    <div class="deliverable-group-title">Baseline</div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Repulsive Shells shape space.</strong> Graph
+                            manifold construction over an elastic shell space,
+                            with discrete TPE built into the Riemannian metric.
+                            Includes the underlying Repulsive Surfaces
+                            machinery: hierarchical acceleration,
+                            Sobolev-preconditioned descent, constraints, and
+                            dynamic remeshing.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>CUDA acceleration.</strong> GPU-accelerated
+                            adaptive TPE evaluation, BVH construction, and
+                            multipole interactions. The near-field adaptive
+                            subdivision maps well to warp-level parallelism.
+                            Neither paper implemented GPU parallelism; both are
+                            bottlenecked at 4-8 CPU threads.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Canonical embedding gallery.</strong> TPE
+                            minimizers for unknotted surfaces of increasing
+                            genus, showing the polyhedral symmetries reported by
+                            Yu et al.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong
+                                >Intersection-free shape interpolation.</strong
+                            >
+                            Geodesic interpolation on the graph manifold between
+                            pairs of meshes, producing collision-free
+                            trajectories by construction.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Quantitative validation.</strong> Energy
+                            convergence under mesh refinement, preconditioner
+                            comparison, and GPU speedup curves.
+                        </div>
+                    </div>
+                </div>
 
-  <p>
-    A C++/CUDA system that takes triangle meshes as input and produces
-    intersection-free optimized or interpolated geometry as output.
-    We evaluate on <strong>visual quality</strong> (do we reproduce results
-    from the papers?), <strong>correctness</strong> (does the discrete energy
-    converge under refinement?), and <strong>performance</strong> (how much
-    does GPU acceleration buy us?).
-  </p>
+                <div class="deliverable-group aspirational">
+                    <div class="deliverable-group-title">Aspirational</div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong
+                                >Continuous collision detection during line
+                                search.</strong
+                            >
+                            The discrete TPE does not hard-guarantee
+                            intersection-free results. Adding CCD as a safety
+                            net during optimization would be a practical
+                            robustness improvement identified by Yu et al. as
+                            future work.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Curvature-adapted remeshing.</strong>
+                            Concentrate mesh resolution where curvature is high,
+                            reducing total face count without sacrificing
+                            quality. Flagged by Yu et al. as a way to improve
+                            performance.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Adaptive quadrature on the GPU.</strong>
+                            Repulsive Shells develops adaptive TPE quadrature
+                            that prevents collisions on coarse meshes. Porting
+                            this to CUDA is nontrivial (variable work per
+                            triangle pair) and would be a novel contribution.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Multiple applications</strong> demonstrating
+                            the framework's versatility, e.g. both shape
+                            interpolation and packing, or isotopy visualization
+                            for knotted surfaces.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong
+                                >Multigrid preconditioner for dense
+                                constraints.</strong
+                            >
+                            The current GMRES-based preconditioner cannot handle
+                            per-triangle constraints (e.g., area preservation)
+                            without $O(|F|)$ solves. A multigrid approach could
+                            unlock this, as noted by Yu et al.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Alternative repulsive potentials.</strong>
+                            Explore Mobius energy (with the elastic term
+                            compensating for its "pull tight" tendency), a
+                            continuous/convergent variant of IPC with larger
+                            cutoff distances, or the cosine energy of Kusner and
+                            Sullivan. Each offers different tradeoffs between
+                            computational cost and long-range guidance quality.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Boundary treatment.</strong> TPE is only
+                            proven to be an infinite barrier for closed
+                            surfaces. A rigorous treatment for open surfaces
+                            (clothing, sheets, membranes with holes) could add
+                            TPE of boundary curves plus a boundary-to-surface
+                            interaction term, as discussed by Sassen et al.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong
+                                >Adaptive remeshing during geodesic
+                                computation.</strong
+                            >
+                            Mesh quality degrades under large tangential
+                            shearing during shape interpolation. Unlike static
+                            optimization (where Repulsive Surfaces does
+                            remeshing), doing it during geodesic computation
+                            requires consistent connectivity across time steps
+                            for the path energy, or a formulation more agnostic
+                            to connectivity.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Reduced-order shape spaces.</strong>
+                            Parameterize the shape space by skeletal rig
+                            parameters, learned latent codes, or sparse
+                            deformation handles instead of raw vertex positions.
+                            The graph manifold construction is agnostic to the
+                            coordinate representation. This would make
+                            collision-free interpolation practical for animation
+                            pipelines. Mentioned but not pursued by Sassen et
+                            al.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Volumetric coupling.</strong> Replace the 2D
+                            shell elasticity model with a 3D volumetric FEM
+                            model for objects with meaningful thickness. TPE
+                            still lives on the boundary surface, but the elastic
+                            response comes from the volume. Explicitly mentioned
+                            as future work by Sassen et al.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>Topology-aware extensions.</strong> A hybrid
+                            approach where the repulsive shell space handles
+                            collision-free deformation, and topological surgery
+                            operations handle connectivity changes (tearing,
+                            merging, cutting) at prescribed moments, with the
+                            repulsive metric ensuring surgery happens cleanly.
+                        </div>
+                    </div>
+                    <div class="deliverable-item">
+                        <div class="deliverable-bullet"></div>
+                        <div class="deliverable-text">
+                            <strong>WebGPU real-time demo.</strong> TPE
+                            evaluation and gradient descent in WebGPU compute
+                            shaders, mesh visualization in render shaders, all
+                            on the GPU with no CPU round-trip. A browser-based
+                            interactive tool where you drag a mesh and watch
+                            repulsive forces redistribute geometry in real time.
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-  <div class="deliverable-group baseline">
-    <div class="deliverable-group-title">Baseline</div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Repulsive Shells shape space.</strong> Graph manifold construction
-        over an elastic shell space, with discrete TPE built into the
-        Riemannian metric. Includes the underlying Repulsive Surfaces
-        machinery: hierarchical acceleration, Sobolev-preconditioned descent,
-        constraints, and dynamic remeshing.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>CUDA acceleration.</strong> GPU-accelerated adaptive TPE evaluation,
-        BVH construction, and multipole interactions. The near-field adaptive
-        subdivision maps well to warp-level parallelism. Neither paper
-        implemented GPU parallelism; both are bottlenecked at 4-8 CPU threads.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Canonical embedding gallery.</strong> TPE minimizers for
-        unknotted surfaces of increasing genus, showing the polyhedral
-        symmetries reported by Yu et al.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Intersection-free shape interpolation.</strong> Geodesic
-        interpolation on the graph manifold between pairs of meshes,
-        producing collision-free trajectories by construction.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Quantitative validation.</strong> Energy convergence under
-        mesh refinement, preconditioner comparison, and GPU speedup curves.
-      </div>
-    </div>
-  </div>
+            <div class="divider"></div>
 
-  <div class="deliverable-group aspirational">
-    <div class="deliverable-group-title">Aspirational</div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Continuous collision detection during line search.</strong>
-        The discrete TPE does not hard-guarantee intersection-free results.
-        Adding CCD as a safety net during optimization would be a practical
-        robustness improvement identified by Yu et al. as future work.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Curvature-adapted remeshing.</strong> Concentrate mesh
-        resolution where curvature is high, reducing total face count
-        without sacrificing quality. Flagged by Yu et al. as a way to
-        improve performance.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Adaptive quadrature on the GPU.</strong> Repulsive Shells
-        develops adaptive TPE quadrature that prevents collisions on coarse
-        meshes. Porting this to CUDA is nontrivial (variable work per
-        triangle pair) and would be a novel contribution.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Multiple applications</strong> demonstrating the framework's
-        versatility, e.g. both shape interpolation and packing, or isotopy
-        visualization for knotted surfaces.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Multigrid preconditioner for dense constraints.</strong>
-        The current GMRES-based preconditioner cannot handle per-triangle
-        constraints (e.g., area preservation) without $O(|F|)$ solves.
-        A multigrid approach could unlock this, as noted by Yu et al.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Alternative repulsive potentials.</strong> Explore Mobius energy
-        (with the elastic term compensating for its "pull tight" tendency),
-        a continuous/convergent variant of IPC with larger cutoff distances,
-        or the cosine energy of Kusner and Sullivan. Each offers different
-        tradeoffs between computational cost and long-range guidance quality.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Boundary treatment.</strong> TPE is only proven to be an infinite
-        barrier for closed surfaces. A rigorous treatment for open surfaces
-        (clothing, sheets, membranes with holes) could add TPE of boundary
-        curves plus a boundary-to-surface interaction term, as discussed
-        by Sassen et al.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Adaptive remeshing during geodesic computation.</strong> Mesh
-        quality degrades under large tangential shearing during shape
-        interpolation. Unlike static optimization (where Repulsive Surfaces
-        does remeshing), doing it during geodesic computation requires
-        consistent connectivity across time steps for the path energy,
-        or a formulation more agnostic to connectivity.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Reduced-order shape spaces.</strong> Parameterize the shape
-        space by skeletal rig parameters, learned latent codes, or sparse
-        deformation handles instead of raw vertex positions. The graph
-        manifold construction is agnostic to the coordinate
-        representation. This would make collision-free interpolation
-        practical for animation pipelines. Mentioned but not pursued
-        by Sassen et al.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Volumetric coupling.</strong> Replace the 2D shell elasticity
-        model with a 3D volumetric FEM model for objects with meaningful
-        thickness. TPE still lives on the boundary surface, but the elastic
-        response comes from the volume. Explicitly mentioned as future work
-        by Sassen et al.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>Topology-aware extensions.</strong> A hybrid approach where the
-        repulsive shell space handles collision-free deformation, and
-        topological surgery operations handle connectivity changes (tearing,
-        merging, cutting) at prescribed moments, with the repulsive metric
-        ensuring surgery happens cleanly.
-      </div>
-    </div>
-    <div class="deliverable-item">
-      <div class="deliverable-bullet"></div>
-      <div class="deliverable-text">
-        <strong>WebGPU real-time demo.</strong> TPE evaluation and gradient
-        descent in WebGPU compute shaders, mesh visualization in render
-        shaders, all on the GPU with no CPU round-trip. A browser-based
-        interactive tool where you drag a mesh and watch repulsive forces
-        redistribute geometry in real time.
-      </div>
-    </div>
-  </div>
-</section>
+            <section id="schedule">
+                <div class="section-num">03 — Schedule</div>
+                <h2>Week by week</h2>
 
-<div class="divider"></div>
+                <div class="schedule">
+                    <div class="week">
+                        <div class="week-label">Week 1</div>
+                        <div class="week-content">
+                            <strong>Core engine.</strong>
+                            Mesh infrastructure, discrete TPE with BVH
+                            acceleration, gradient computation. Begin CUDA port
+                            of energy/gradient evaluation. By end of week:
+                            flowing a mesh toward a TPE minimum.
+                        </div>
+                    </div>
+                    <div class="week">
+                        <div class="week-label">Week 2</div>
+                        <div class="week-content">
+                            <strong>Optimization.</strong>
+                            Sobolev preconditioning, constraint handling,
+                            remeshing. First canonical embedding results (genus
+                            0–3). GPU performance benchmarks.
+                        </div>
+                    </div>
+                    <div class="week">
+                        <div class="week-label">Week 3</div>
+                        <div class="week-content">
+                            <strong>Applications.</strong>
+                            Build out the most promising application direction.
+                            Expand the canonical embedding gallery. Explore
+                            WebGPU if CUDA pipeline is solid.
+                        </div>
+                    </div>
+                    <div class="week">
+                        <div class="week-label">Week 4</div>
+                        <div class="week-content">
+                            <strong>Polish.</strong>
+                            Final renders, convergence plots, write-up,
+                            presentation, video. Additional applications if time
+                            permits.
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-<section id="schedule">
-  <div class="section-num">03 — Schedule</div>
-  <h2>Week by week</h2>
+            <div class="divider"></div>
 
-  <div class="schedule">
-    <div class="week">
-      <div class="week-label">Week 1</div>
-      <div class="week-content">
-        <strong>Core engine.</strong>
-        Mesh infrastructure, discrete TPE with BVH acceleration, gradient
-        computation. Begin CUDA port of energy/gradient evaluation.
-        By end of week: flowing a mesh toward a TPE minimum.
-      </div>
-    </div>
-    <div class="week">
-      <div class="week-label">Week 2</div>
-      <div class="week-content">
-        <strong>Optimization.</strong>
-        Sobolev preconditioning, constraint handling, remeshing. First
-        canonical embedding results (genus 0–3). GPU performance benchmarks.
-      </div>
-    </div>
-    <div class="week">
-      <div class="week-label">Week 3</div>
-      <div class="week-content">
-        <strong>Applications.</strong>
-        Build out the most promising application direction. Expand the
-        canonical embedding gallery. Explore WebGPU if CUDA pipeline is solid.
-      </div>
-    </div>
-    <div class="week">
-      <div class="week-label">Week 4</div>
-      <div class="week-content">
-        <strong>Polish.</strong>
-        Final renders, convergence plots, write-up, presentation, video.
-        Additional applications if time permits.
-      </div>
-    </div>
-  </div>
-</section>
+            <section id="resources">
+                <div class="section-num">04 — Resources</div>
+                <h2>References and tools</h2>
 
-<div class="divider"></div>
+                <h3>Papers</h3>
+                <div class="resource-list">
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://doi.org/10.1145/3478513.3480521"
+                                target="_blank"
+                                >Repulsive Surfaces</a
+                            >
+                            · Yu, Brakensiek, Schumacher, Crane (2021)
+                        </div>
+                        <div class="resource-desc">
+                            Primary reference. TPE discretization, fractional
+                            preconditioning, hierarchical acceleration.
+                        </div>
+                    </div>
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://doi.org/10.1145/3658174"
+                                target="_blank"
+                                >Repulsive Shells</a
+                            >
+                            · Sassen, Schumacher, Rumpf, Crane (2024)
+                        </div>
+                        <div class="resource-desc">
+                            Graph manifold construction, shape space geodesics,
+                            adaptive TPE quadrature.
+                        </div>
+                    </div>
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://doi.org/10.1145/3439429"
+                                target="_blank"
+                                >Repulsive Curves</a
+                            >
+                            · Yu, Schumacher, Crane (2021)
+                        </div>
+                        <div class="resource-desc">
+                            Same ideas in the simpler curve setting. Good for
+                            building intuition.
+                        </div>
+                    </div>
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a href="https://arxiv.org/abs/1102.3642"
+                                >Tangent-point repulsive potentials · Strzelecki
+                                &amp; von der Mosel (2013)</a
+                            >
+                        </div>
+                        <div class="resource-desc">
+                            Mathematical foundations. TPE is finite iff the
+                            surface is embedded.
+                        </div>
+                    </div>
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://dl.acm.org/doi/abs/10.1111/j.1467-8659.2012.03180.x"
+                            >
+                                Time-Discrete Geodesics in the Space of Shells ·
+                                Heeren, Rumpf, Wardetzky, Wirth (2012)
+                            </a>
+                        </div>
+                        <div class="resource-desc">
+                            Foundation for the discrete shell space and elastic
+                            metric used in Repulsive Shells.
+                        </div>
+                    </div>
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://www.cs.cmu.edu/~kmcrane/Projects/DDG/"
+                                target="_blank"
+                                >Discrete Differential Geometry: An Applied
+                                Introduction</a
+                            >
+                            · Crane (2021)
+                        </div>
+                        <div class="resource-desc">
+                            Reference for cotan Laplacian, discrete curvatures,
+                            and other mesh-level building blocks.
+                        </div>
+                    </div>
+                </div>
 
-<section id="resources">
-  <div class="section-num">04 — Resources</div>
-  <h2>References and tools</h2>
+                <h3>Code and compute</h3>
+                <div class="resource-list">
+                    <div class="resource">
+                        <div class="resource-title">
+                            <a
+                                href="https://github.com/HenrikSchumacher/Repulsor"
+                                target="_blank"
+                                >Repulsor</a
+                            >
+                            · reference TPE implementation (C++)
+                        </div>
+                    </div>
+                </div>
 
-  <h3>Papers</h3>
-  <div class="resource-list">
-    <div class="resource">
-      <div class="resource-title">
-        <a href="https://doi.org/10.1145/3478513.3480521" target="_blank">Repulsive Surfaces</a> · Yu, Brakensiek, Schumacher, Crane (2021)
-      </div>
-      <div class="resource-desc">Primary reference. TPE discretization, fractional preconditioning, hierarchical acceleration.</div>
-    </div>
-    <div class="resource">
-      <div class="resource-title">
-        <a href="https://doi.org/10.1145/3658174" target="_blank">Repulsive Shells</a> · Sassen, Schumacher, Rumpf, Crane (2024)
-      </div>
-      <div class="resource-desc">Graph manifold construction, shape space geodesics, adaptive TPE quadrature.</div>
-    </div>
-    <div class="resource">
-      <div class="resource-title">
-        <a href="https://doi.org/10.1145/3439429" target="_blank">Repulsive Curves</a> · Yu, Schumacher, Crane (2021)
-      </div>
-      <div class="resource-desc">Same ideas in the simpler curve setting. Good for building intuition.</div>
-    </div>
-    <div class="resource">
-      <div class="resource-title">Tangent-point repulsive potentials · Strzelecki &amp; von der Mosel (2013)</div>
-      <div class="resource-desc">Mathematical foundations. TPE is finite iff the surface is embedded.</div>
-    </div>
-    <div class="resource">
-      <div class="resource-title">Time-Discrete Geodesics in the Space of Shells · Heeren, Rumpf, Wardetzky, Wirth (2012)</div>
-      <div class="resource-desc">Foundation for the discrete shell space and elastic metric used in Repulsive Shells.</div>
-    </div>
-    <div class="resource">
-      <div class="resource-title">
-        <a href="https://www.cs.cmu.edu/~kmcrane/Projects/DDG/" target="_blank">Discrete Differential Geometry: An Applied Introduction</a> · Crane (2021)
-      </div>
-      <div class="resource-desc">Reference for cotan Laplacian, discrete curvatures, and other mesh-level building blocks.</div>
-    </div>
-  </div>
+                <div class="card-row">
+                    <div class="card">
+                        <div class="card-label">Language</div>
+                        <div class="card-value">C++17 / CUDA</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Compute</div>
+                        <div class="card-value">
+                            4× NVIDIA A100 (Perlmutter, NERSC)
+                            <br />
+                            1× NVIDIA 4070 Super
+                            <br />
+                            1× NVIDIA 3050 Ti Laptop
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
 
-  <h3>Code and compute</h3>
-  <div class="resource-list">
-    <div class="resource">
-      <div class="resource-title">
-        <a href="https://github.com/HenrikSchumacher/Repulsor" target="_blank">Repulsor</a> · reference TPE implementation (C++)
-      </div>
-    </div>
-  </div>
-
-  <div class="card-row">
-    <div class="card">
-      <div class="card-label">Language</div>
-      <div class="card-value">C++17 / CUDA</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Compute</div>
-      <div class="card-value">4× NVIDIA A100 (Perlmutter, NERSC)</div>
-    </div>
-  </div>
-</section>
-
-</div>
-
-<script>
-  document.getElementById('dark-toggle').addEventListener('click', function() {
-    document.body.classList.toggle('dark');
-  });
-</script>
-</body>
+        <script>
+            document
+                .getElementById("dark-toggle")
+                .addEventListener("click", function () {
+                    document.body.classList.toggle("dark");
+                });
+        </script>
+    </body>
 </html>
