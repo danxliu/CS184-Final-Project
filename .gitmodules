@@ -1,0 +1,9 @@
+[submodule "ext/eigen"]
+	path = ext/eigen
+	url = https://gitlab.com/libeigen/eigen.git
+[submodule "ext/openmesh"]
+	path = ext/openmesh
+	url = https://github.com/Lawrencemm/openmesh
+[submodule "ext/nanogui"]
+	path = ext/nanogui
+	url = https://github.com/mitsuba-renderer/nanogui
