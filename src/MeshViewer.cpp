@@ -78,7 +78,7 @@ MeshViewer::MeshViewer(const std::string &filename)
     : Screen(Vector2i(800, 600), "Renderer", true, false, false, true, false) {
   read_mesh(filename);
   m_index_count = m_indices.size();
-  m_render_pass = new RenderPass({this});
+  m_render_pass = new RenderPass({this}, this);
   m_render_pass->set_clear_color(0, m_background_color);
   m_render_pass->set_clear_depth(1.0f);
 
