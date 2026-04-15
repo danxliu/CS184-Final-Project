@@ -9,7 +9,7 @@ pkg_check_modules(EIGEN3 REQUIRED eigen3)
 find_package(OpenMesh REQUIRED)
 add_subdirectory(ext/nanogui)
 
-add_executable(RepulsiveShells src/main.cpp)
+add_executable(RepulsiveShells src/main.cpp src/MeshViewer.cpp)
 
 target_include_directories(RepulsiveShells PRIVATE 
     ${EIGEN3_INCLUDE_DIRS}

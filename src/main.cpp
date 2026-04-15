@@ -1,16 +1,20 @@
 #include <nanogui/nanogui.h>
 #include <iostream>
+#include "MeshViewer.h"
 
-using namespace nanogui;
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " <mesh.obj>" << std::endl;
+        return -1;
+    }
 
-int main() {
     nanogui::init();
-
-    Screen *screen = new Screen(Vector2i(500, 700), "NanoGUI test");
-    screen->set_visible(true);
-
-    nanogui::run();
-
+    {
+        nanogui::ref<MeshViewer> app = new MeshViewer(argv[1]);
+        app->draw_all();
+        app->set_visible(true);
+        nanogui::run();
+    }
     nanogui::shutdown();
 
     return 0;

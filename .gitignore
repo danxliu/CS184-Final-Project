@@ -11,6 +11,7 @@ devenv.local.yaml
 
 # C++
 build
+.cache
 
 # Submodules
 ext/

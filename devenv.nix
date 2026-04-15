@@ -1,10 +1,17 @@
-{ pkgs, lib, config, inputs, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  inputs,
+  ...
+}:
 
 {
   env.GREET = "devenv";
-  packages = with pkgs; [ 
+  packages = with pkgs; [
     git
     cmake
+    clang-tools
     pkg-config
     ninja
     gcc
@@ -19,7 +26,7 @@
     (suitesparse.override {
       enableCuda = false;
     })
-    
+
     # OpenGL & X11
     libGL
     libGLU
@@ -33,17 +40,20 @@
 
   languages.cplusplus.enable = true;
 
-  env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
-    libGL
-    xorg.libX11
-    xorg.libXext
-    xorg.libXinerama
-    xorg.libXcursor
-    xorg.libXrandr
-    xorg.libXi
-    wayland
-    libxkbcommon
-  ]);
+  env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
+    with pkgs;
+    [
+      libGL
+      xorg.libX11
+      xorg.libXext
+      xorg.libXinerama
+      xorg.libXcursor
+      xorg.libXrandr
+      xorg.libXi
+      wayland
+      libxkbcommon
+    ]
+  );
 
   enterShell = ''
     cmake --version
