@@ -1,10 +1,15 @@
-#version 330
-uniform mat4 mvp;
-uniform mat4 model;
+#version 330 core
 in vec3 position;
 in vec3 normal;
-out vec3 vNormal;
+
+uniform mat4 mvp;
+uniform mat4 model;
+
+out vec3 FragPos;
+out vec3 Normal;
+
 void main() {
-    vNormal = mat3(model) * normal;
     gl_Position = mvp * vec4(position, 1.0);
+    FragPos = vec3(model * vec4(position, 1.0));
+    Normal = mat3(transpose(inverse(model))) * normal;
 }

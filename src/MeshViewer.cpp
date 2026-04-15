@@ -1,9 +1,9 @@
 #include "MeshViewer.h"
-#include <fstream>
 #include <GLFW/glfw3.h>
+#include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
-#include <cmath>
 #include <nanogui/opengl.h>
 #include <nanogui/renderpass.h>
 #include <nanogui/screen.h>
@@ -47,7 +47,8 @@ void MeshViewer::read_mesh(const std::string &filename) {
   m_normals.clear();
   m_indices.clear();
 
-  bool has_imported_normals = read_options.check(OpenMesh::IO::Options::VertexNormal);
+  bool has_imported_normals =
+      read_options.check(OpenMesh::IO::Options::VertexNormal);
   if (!has_imported_normals) {
     mesh.update_normals();
   }
@@ -77,7 +78,7 @@ MeshViewer::MeshViewer(const std::string &filename)
     : Screen(Vector2i(800, 600), "Renderer", true, false, false, true, false) {
   read_mesh(filename);
   m_index_count = m_indices.size();
-  m_render_pass = new RenderPass({ this });
+  m_render_pass = new RenderPass({this});
   m_render_pass->set_clear_color(0, m_background_color);
   m_render_pass->set_clear_depth(1.0f);
 
@@ -90,8 +91,8 @@ MeshViewer::MeshViewer(const std::string &filename)
   m_shader->set_buffer("normal", VariableType::Float32,
                        {m_normals.size() / 3, 3}, m_normals.data());
 
-  m_shader->set_buffer("indices", VariableType::UInt32,
-                       {m_indices.size()}, m_indices.data());
+  m_shader->set_buffer("indices", VariableType::UInt32, {m_indices.size()},
+                       m_indices.data());
 }
 
 Vector3f MeshViewer::camera_forward() const {
@@ -137,7 +138,8 @@ void MeshViewer::orbit_camera(const Vector2f &rel) {
   }
 
   float yaw = std::atan2(offset.x(), offset.z());
-  float horizontal = std::sqrt(offset.x() * offset.x() + offset.z() * offset.z());
+  float horizontal =
+      std::sqrt(offset.x() * offset.x() + offset.z() * offset.z());
   float pitch = std::atan2(offset.y(), horizontal);
 
   yaw -= rel.x() * m_orbit_sensitivity;
@@ -145,10 +147,9 @@ void MeshViewer::orbit_camera(const Vector2f &rel) {
   const float max_pitch = 1.55334f; // ~89 degrees
   pitch = clip(pitch, -max_pitch, max_pitch);
 
-  Vector3f new_offset(
-      radius * std::sin(yaw) * std::cos(pitch),
-      radius * std::sin(pitch),
-      radius * std::cos(yaw) * std::cos(pitch));
+  Vector3f new_offset(radius * std::sin(yaw) * std::cos(pitch),
+                      radius * std::sin(pitch),
+                      radius * std::cos(yaw) * std::cos(pitch));
   m_camera_eye = m_camera_target + new_offset;
 }
 
@@ -156,7 +157,8 @@ void MeshViewer::pan_camera(const Vector2f &rel) {
   float distance = norm(m_camera_target - m_camera_eye);
   Vector3f right = camera_right();
   Vector3f up = normalize(cross(right, camera_forward()));
-  Vector3f delta = (-rel.x() * right + rel.y() * up) * m_pan_sensitivity * distance * 0.002f;
+  Vector3f delta =
+      (-rel.x() * right + rel.y() * up) * m_pan_sensitivity * distance * 0.002f;
 
   m_camera_eye += delta;
   m_camera_target += delta;
@@ -173,12 +175,13 @@ void MeshViewer::zoom_camera(float scroll_delta) {
   if (zoom_scale <= 0.05f) {
     zoom_scale = 0.05f;
   }
-  float new_distance = clip(current_distance * zoom_scale, m_min_camera_distance,
-                            m_max_camera_distance);
+  float new_distance = clip(current_distance * zoom_scale,
+                            m_min_camera_distance, m_max_camera_distance);
   m_camera_eye = m_camera_target + normalize(offset) * new_distance;
 }
 
-bool MeshViewer::keyboard_event(int key, int scancode, int action, int modifiers) {
+bool MeshViewer::keyboard_event(int key, int scancode, int action,
+                                int modifiers) {
   if (Screen::keyboard_event(key, scancode, action, modifiers)) {
     return true;
   }
@@ -267,9 +270,16 @@ void MeshViewer::draw_contents() {
   m_shader->set_uniform("mvp", mvp);
   m_shader->set_uniform("model", model);
 
+  m_shader->set_uniform(
+      "lightPos",
+      Vector3f(2.0f, 5.0f, 5.0f));
+  m_shader->set_uniform("viewPos", m_camera_eye);
+  m_shader->set_uniform("objectColor",
+                        Vector3f(0.3f, 0.6f, 0.9f));
+
   m_render_pass->resize(framebuffer_size());
   m_render_pass->begin();
-  m_render_pass->set_cull_mode(RenderPass::CullMode::Disabled);
+  m_render_pass->set_cull_mode(RenderPass::CullMode::Back);
   m_render_pass->set_depth_test(RenderPass::DepthTest::Less, true);
   m_shader->begin();
   m_shader->draw_array(Shader::PrimitiveType::Triangle, 0, m_index_count, true);
