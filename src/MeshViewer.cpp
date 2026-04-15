@@ -270,12 +270,10 @@ void MeshViewer::draw_contents() {
   m_shader->set_uniform("mvp", mvp);
   m_shader->set_uniform("model", model);
 
-  m_shader->set_uniform(
-      "lightPos",
-      Vector3f(2.0f, 5.0f, 5.0f));
+  // Passed into shaders
+  m_shader->set_uniform("lightPos", m_light_pos);
   m_shader->set_uniform("viewPos", m_camera_eye);
-  m_shader->set_uniform("objectColor",
-                        Vector3f(0.3f, 0.6f, 0.9f));
+  m_shader->set_uniform("objectColor", m_object_color);
 
   m_render_pass->resize(framebuffer_size());
   m_render_pass->begin();
