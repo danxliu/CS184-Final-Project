@@ -1,6 +1,8 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 
 let
+  nixGL = inputs.nixgl.packages.${pkgs.system}.nixGLIntel;
+
   # Runtime shared libraries the viewer dlopens at startup. These have to be on
   # LD_LIBRARY_PATH because NixOS doesn't expose system libraries via standard
   # paths.
@@ -14,6 +16,7 @@ let
     xorg.libXi
     xorg.libXinerama
     xorg.libXrandr
+    xorg.libxcb
   ];
 in {
   languages.cplusplus.enable = true;
@@ -46,6 +49,8 @@ in {
     xorg.libXinerama
     xorg.libXrandr
     xorg.libXxf86vm
+    xorg.libxcb
+    nixGL
   ];
 
   env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;

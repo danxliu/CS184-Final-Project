@@ -139,11 +139,14 @@ int main(int /*argc*/, char ** /*argv*/) {
         tau = std::min(tau * 2.0, 1.0);
         int n_bt = 0;
         MeshData m_try = m;
+        rsh::BVH bvh_try = bvh;
         double E_new = E;
         for (; n_bt < max_backtracks; ++n_bt) {
             m_try.V = m.V - tau * G;
             m_try.normalize();
-            E_new = rsh::tpe_energy_bh(m_try, alpha, theta);
+            const rsh::FaceGeom g_try = rsh::compute_face_geom(m_try);
+            rsh::update_bvh_aggregates(bvh_try, g_try);
+            E_new = rsh::tpe_energy_bh(g_try, bvh_try, bp, alpha);
             if (E_new <= E - armijo_c1 * tau * gnorm2) break;
             tau *= shrink;
         }
