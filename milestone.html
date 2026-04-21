@@ -167,32 +167,21 @@
             h2 {
                 font-size: 1.65rem;
                 font-weight: 400;
-                margin-bottom: 1rem;
+                margin-bottom: 1.25rem;
                 line-height: 1.2;
             }
             h3 {
-                font-size: 0.95rem;
+                font-size: 0.98rem;
                 font-weight: 600;
-                margin-top: 1.25rem;
-                margin-bottom: 0.5rem;
+                margin-top: 1.75rem;
+                margin-bottom: 0.4rem;
+                color: var(--text);
             }
             p {
                 margin-bottom: 1rem;
                 color: var(--text-dim);
             }
             p strong {
-                color: var(--text);
-                font-weight: 500;
-            }
-            ul {
-                color: var(--text-dim);
-                padding-left: 1.25rem;
-                margin-bottom: 1rem;
-            }
-            ul li {
-                margin-bottom: 0.4rem;
-            }
-            ul li strong {
                 color: var(--text);
                 font-weight: 500;
             }
@@ -216,9 +205,15 @@
                 border-radius: 2px;
             }
 
+            .katex {
+                font-size: 1em;
+            }
             .katex-display {
                 margin: 0.5rem 0 !important;
                 overflow: hidden !important;
+            }
+            .katex-display .katex {
+                font-size: 1.1em;
             }
 
             .week {
@@ -261,7 +256,7 @@
             }
 
             .plot {
-                margin: 1rem 0 0.5rem;
+                margin: 1.25rem 0 0.5rem;
                 padding: 0.75rem;
                 background: var(--surface);
                 border: 1px solid var(--border);
@@ -342,9 +337,9 @@
             </div>
             <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
             <p class="hero-sub">
-                Repulsive Shells on the GPU — a C++/(soon-)CUDA implementation
-                of the tangent-point energy pipeline for collision-free shape
-                optimization, interpolation, and averaging.
+                A C++ (soon CUDA) implementation of Repulsive Shells on the GPU,
+                for collision-free shape optimization, interpolation, and
+                averaging.
             </p>
             <div class="team">
                 <span
@@ -391,134 +386,154 @@
         <div class="content">
             <section id="accomplishments">
                 <div class="section-num">01 — Accomplishments</div>
-                <h2>CPU pipeline end-to-end through Phase 1</h2>
+                <h2>What's working</h2>
 
                 <p>
-                    Two phases of the roadmap are complete and gated by regression
-                    tests: <strong>Phase 0</strong> (infrastructure) and
-                    <strong>Phase 1</strong> (discrete tangent-point energy with
-                    Barnes-Hut acceleration, including the gradient). Together they
-                    get us to
-                    <em>"flow a mesh along $-\nabla \hat\Phi$ at $O(n \log n)$"</em>,
-                    which is the Week&nbsp;1 target from the proposal.
+                    Two bodies of work are complete and locked in by regression
+                    tests (67 checks total, all green): mesh infrastructure
+                    with a finite-difference gradient checker, and the full
+                    discrete tangent-point energy with Barnes-Hut acceleration,
+                    including the gradient. Put together, we can flow a mesh
+                    along $-\nabla \hat\Phi$ at $O(n \log n)$ cost per
+                    iteration, which was the Week 1 target from the proposal.
                 </p>
 
-                <h3>Phase 0 — infrastructure</h3>
-                <ul>
-                    <li>
-                        <strong>SoA mesh</strong> (<code>MeshData</code>: $V, F,
-                        N, L_0$) with an OpenMesh round-trip bridge for later
-                        topology-aware remeshing.
-                    </li>
-                    <li>
-                        <strong>Finite-difference gradient checker</strong> with
-                        central differences — the validation gate every
-                        analytical gradient below has to pass before anything
-                        downstream depends on it.
-                    </li>
-                    <li>
-                        <strong>Procedural test meshes</strong>: icosphere (any
-                        subdivision level) and torus with analytic normals.
-                    </li>
-                </ul>
+                <h3>Mesh data structure and OpenMesh bridge</h3>
+                <p>
+                    Triangle meshes live in a struct-of-arrays layout ($V$ as
+                    an $n_v \times 3$ matrix, $F$ as $n_f \times 3$, with
+                    optional vertex normals and a cached target edge length
+                    $L_0$). A bridge round-trips into an OpenMesh half-edge
+                    representation, which later remeshing steps will need for
+                    topology-aware edge-split and Delaunay-flip operations. A
+                    <code>normalize()</code> routine centers the mesh on its
+                    vertex centroid and rescales so the bounding-box diagonal
+                    is exactly one, making energy values comparable across
+                    inputs of different scales.
+                </p>
 
-                <h3>Phase 1 — CPU TPE + BVH</h3>
-                <ul>
-                    <li>
-                        <strong>Per-face geometry</strong> with closed-form
-                        Jacobians for centroid, unit normal, and area with
-                        respect to each incident vertex.
-                    </li>
-                    <li>
-                        <strong>Brute-force TPE</strong> $\hat\Phi(x)$ and
-                        $\nabla \hat\Phi(x)$ at $\alpha = 6$ via midpoint
-                        quadrature over ordered face pairs.
-                    </li>
-                    <li>
-                        <strong>SAH BVH</strong> over face AABBs with cluster
-                        aggregates (area, area-weighted centroid, unweighted
-                        normal-sum, radius) cached per node for the Barnes-Hut
-                        pass.
-                    </li>
-                    <li>
-                        <strong>Block-cluster tree</strong> over BVH$\times$BVH
-                        with the RSu radius-form multipole acceptance criterion
-                        $\max(r_U, r_V) < \theta \, \|c_U - c_V\|$ at
-                        $\theta = 0.5$.
-                    </li>
-                    <li>
-                        <strong>Barnes-Hut energy + gradient</strong> at
-                        $O(n \log n)$. Approximates admissible pairs by a
-                        0th-order cluster proxy, sums the remaining leaf-leaf
-                        pairs exactly.
-                    </li>
-                    <li>
-                        <strong>Viewer</strong> (NanoGUI + OpenGL) with
-                        Blinn-Phong shading and a frame-sequence playback mode
-                        (scrubber + <code>Space</code>/<code>←</code>/<code>→</code>
-                        keys) used to debug the gradient flow below.
-                    </li>
-                </ul>
+                <h3>Finite-difference gradient checker</h3>
+                <p>
+                    Central differences with an adaptive step
+                    $h = \epsilon \,(1 + |x_i|)$, calibrated once against a
+                    known analytic quadratic. Every analytical gradient we
+                    write has to pass this check before any downstream code is
+                    allowed to depend on it. The gate caught three sign errors
+                    during development that would otherwise have shown up as
+                    stalled descent in the gradient-flow demo much later, with
+                    no obvious culprit.
+                </p>
+
+                <h3>Procedural test meshes</h3>
+                <p>
+                    Deterministic factories for icosphere (any subdivision
+                    level, analytic outward normals, $10 \cdot 4^k + 2$
+                    vertices) and torus (parametric, with outward normals and
+                    exact face counts). Every regression test builds its own
+                    mesh from these factories rather than loading a file, so
+                    nothing on disk can silently drift between runs.
+                </p>
+
+                <h3>Discrete tangent-point energy and its gradient</h3>
+                <p>
+                    A brute-force implementation of $\hat\Phi(x)$ and
+                    $\nabla \hat\Phi(x)$ at $\alpha = 6$ via midpoint
+                    quadrature over ordered triangle pairs. The gradient
+                    propagates through per-face Jacobians for centroid, unit
+                    normal, and area with respect to each incident vertex.
+                    Every Jacobian is derived in closed form and verified
+                    against finite differences on a torus mesh before the
+                    acceleration layer goes on top.
+                </p>
+
+                <h3>Hierarchical acceleration</h3>
+                <p>
+                    A top-down SAH bounding volume hierarchy over face AABBs
+                    caches four aggregates at every internal node: total area,
+                    area-weighted centroid, unweighted normal-sum, and cluster
+                    radius. A block-cluster tree built over BVH$\times$BVH
+                    applies the multipole acceptance criterion
+                    $\max(r_U, r_V) < \theta \, \|c_U - c_V\|$ at $\theta =
+                    0.5$ to decide which cluster pairs can be approximated by
+                    a single 0th-order proxy and which have to be expanded
+                    down to their leaves.
+                </p>
+
+                <h3>Barnes-Hut energy and gradient at $O(n \log n)$</h3>
+                <p>
+                    The admissible-pair sum (cluster proxy per pair) plus the
+                    exact leaf-leaf sum give energy and gradient at near-linear
+                    cost. The gradient side needed one subtlety: the set of
+                    admissible pairs itself depends on $x$, so we differentiate
+                    the cluster-approximated kernel at each fixed admissible
+                    block and chain-rule through the aggregate definitions to
+                    vertex positions, rather than trying to differentiate the
+                    piecewise-varying block assignment itself.
+                </p>
             </section>
 
             <section id="results">
                 <div class="section-num">02 — Preliminary results</div>
                 <h2>What we can measure now</h2>
 
+                <h3>Regression suite: 67 checks, all green</h3>
                 <p>
-                    <strong>Regression tests: 20/20 + 47/47 checks pass.</strong>
-                    <code>test_phase0</code> exercises the OpenMesh round-trip,
-                    the normalization + $L_0$ cache, the FD checker on a known
-                    quadratic, and the test-mesh factories.
-                    <code>test_phase1</code> adds 35 checks: FD gradient on
-                    face geometry and on brute-force TPE, scale-covariance
-                    $\hat\Phi(\lambda x) = \lambda^{4-\alpha}\hat\Phi(x)$
-                    (zero relative error, as expected from the closed-form
-                    scaling), translation invariance, aggregate conservation in
-                    the BVH, exact exhaustive pair coverage in the BCT, and
-                    Barnes-Hut-vs-brute cross-checks.
+                    <code>test_phase0</code> runs 20 checks covering the
+                    OpenMesh round-trip, the normalization and $L_0$ cache,
+                    the gradient checker on a known quadratic, and the test-
+                    mesh factories. <code>test_phase1</code> adds 47 more: FD
+                    gradient on face geometry and on brute-force TPE, scale
+                    covariance $\hat\Phi(\lambda x) = \lambda^{4-\alpha}
+                    \hat\Phi(x)$ (zero relative error, matching the closed-
+                    form scaling), translation invariance, cluster-aggregate
+                    conservation inside the BVH, exact exhaustive pair
+                    coverage in the block-cluster tree, and Barnes-Hut versus
+                    brute-force cross-checks.
                 </p>
 
+                <h3>Barnes-Hut accuracy</h3>
                 <p>
-                    <strong>Barnes-Hut accuracy.</strong> At $\theta = 0$ the
-                    Barnes-Hut energy matches brute force to
-                    $\sim 3 \times 10^{-15}$ relative error on a 192-face torus
-                    (pure floating-point summation-order noise). At
+                    At $\theta = 0$ the Barnes-Hut energy matches brute force
+                    to $\sim\!3 \times 10^{-15}$ relative error on a 192-face
+                    torus (pure floating-point summation-order noise). At
                     $\theta = 0.5$ on icosphere$(3)$ (1280 faces) the
                     relative error is $1.0 \times 10^{-3}$, matching the
-                    RSu $\S 5.2$ accuracy claim. A $\theta$-sweep on a thin
-                    torus gives monotone convergence:
-                    $\theta = 0.8 \to 6.9\%$, $\theta = 0.5 \to 4.4\%$,
-                    $\theta = 0.1 \to 1.1 \times 10^{-4}$.
+                    accuracy claim in the Repulsive Surfaces paper. A
+                    $\theta$-sweep on a thin torus gives the expected
+                    monotone convergence: $\theta = 0.8 \to 6.9\%$, $\theta =
+                    0.5 \to 4.4\%$, $\theta = 0.1 \to 1.1 \times 10^{-4}$.
                 </p>
 
+                <h3>$L^2$ gradient flow demo</h3>
                 <p>
-                    <strong>Gradient flow demo.</strong> We descend
-                    $\hat\Phi$ with Armijo-backtracked $L^2$ gradient descent on
-                    an <em>ellipsoid</em> built by scaling icosphere$(2)$ along
-                    its principal axes by $(1.7, 0.75, 0.75)$. The uniform
-                    scaling mode is projected out of the gradient each step so
-                    descent moves shape, not size (TPE is scale-covariant with
-                    exponent $\lambda^{-2}$, so raw descent would inflate the
-                    mesh forever).
+                    We descend $\hat\Phi$ with Armijo-backtracked $L^2$
+                    gradient descent on an ellipsoid built by scaling
+                    icosphere$(2)$ along its principal axes by $(1.7, 0.75,
+                    0.75)$. The uniform-radial mode is projected out of the
+                    gradient each step so descent moves shape rather than
+                    size: TPE is scale-covariant at exponent $\lambda^{-2}$,
+                    so raw descent would otherwise inflate the mesh
+                    indefinitely to lower the energy. The figure below
+                    records 95 iterations of the resulting flow.
                 </p>
 
                 <div class="plot">
                     <img
-                        src="https://coherentmonkey.github.io/184/project/energy.png"
-                        alt="Phase 1.8 L² flow — energy / gradient norm / step size / XZ silhouettes over 95 iterations."
+                        src="milestone_assets/energy.png"
+                        alt="L2 gradient flow on the ellipsoid: energy, gradient norm, step size, and XZ silhouettes over 95 iterations."
                     />
                     <div class="plot-caption">
-                        <strong>Figure.</strong> Phase 1.8 $L^2$ gradient flow
-                        on the ellipsoid, 95 iterations. The energy drops
-                        several-fold before stalling; the Armijo step size
-                        $\tau$ collapses to $\sim\!10^{-12}$ even though
-                        $\|\nabla\hat\Phi\|$ stays $O(10^{1\text{–}3})$. This
-                        is the expected $L^2$ failure mode (RSu Fig.&nbsp;5):
-                        the per-vertex descent step, being mesh-resolution
-                        dependent, can't make progress against the TPE's
-                        high-frequency stiffness at fine mesh scales. The
-                        $H^{s}$ preconditioner in the next phase cures it.
+                        <strong>Figure.</strong> $L^2$ gradient flow on the
+                        ellipsoid, 95 iterations. Energy drops several-fold
+                        then stalls above the round-sphere minimum, and the
+                        Armijo step size $\tau$ collapses toward $10^{-12}$
+                        even though $\|\nabla\hat\Phi\|$ stays in the range
+                        $10^{1}$–$10^{3}$. This is the expected $L^2$ failure
+                        mode (Yu et al. Fig. 5): the per-vertex descent step,
+                        being mesh-resolution dependent, can't make progress
+                        against the TPE's high-frequency stiffness at fine
+                        mesh scales. The $H^s$ preconditioner in the next
+                        phase cures it.
                     </div>
                 </div>
             </section>
@@ -528,46 +543,49 @@
                 <h2>On track, with one planned addition</h2>
 
                 <p>
-                    We're on schedule relative to the proposal's Week&nbsp;1
-                    goal — <em>"flowing a mesh toward a TPE minimum"</em> — and
-                    the gradient is FD-checked everywhere it matters. Phase 1
-                    consumed the full week rather than a few days, which was
-                    the right call: at $\alpha = 6$ the kernel has extreme
-                    stiffness at short range, and every sign error in the
-                    chain rule shows up as stalled descent rather than an
-                    exception. Catching those with a mandatory FD gate on
+                    We're on schedule relative to the proposal's Week 1 goal
+                    of "flowing a mesh toward a TPE minimum", and the
+                    gradient is FD-checked everywhere it matters. The energy
+                    work consumed the full week rather than a few days, which
+                    was the right call: at $\alpha = 6$ the kernel has
+                    extreme stiffness at short range, and every sign error in
+                    the chain rule shows up as stalled descent rather than as
+                    an exception. Catching those with a mandatory FD gate on
                     every analytical derivative before anything depends on it
-                    is what made the Phase 1.8 demo work on the first try.
+                    is what made the gradient-flow demo work on the first
+                    try.
                 </p>
 
+                <h3>One addition to the plan</h3>
                 <p>
-                    <strong>One addition to the plan.</strong> Our FD checks
-                    prove <em>internal consistency</em> (the analytical
-                    gradient matches the finite difference), not
+                    Our FD checks prove <em>internal consistency</em> (the
+                    analytical gradient matches the finite difference), not
                     <em>correctness</em> (the kernel itself is right). A bug
-                    that flips a sign in both energy and gradient consistently
-                    is undetectable by FD. Before Phase 2 starts we will
-                    cross-validate against the reference CPU implementation
+                    that flips a sign in both energy and gradient
+                    consistently is undetectable by finite differences.
+                    Before the optimization work starts, we will cross-
+                    validate against the reference CPU implementation
                     (<a
                         href="https://github.com/HenrikSchumacher/Repulsor"
                         target="_blank"
                         >HenrikSchumacher/Repulsor</a
-                    >) on a handful of meshes — running the same OBJs through
+                    >) on a handful of meshes, running the same OBJs through
                     both pipelines and comparing $\hat\Phi$ and
                     $\nabla\hat\Phi$ to the Barnes-Hut tolerance at matching
-                    $\theta$. Repulsor is loaded as an external checkout (not
-                    vendored). This was not in the original proposal; it
-                    replaces "more genus-gallery meshes" as the Week&nbsp;2
+                    $\theta$. Repulsor is loaded as an external checkout, not
+                    vendored. This was not in the original proposal; it
+                    replaces "more genus-gallery meshes" as our Week 2
                     validation milestone.
                 </p>
 
+                <h3>One small slip</h3>
                 <p>
-                    <strong>Small slip.</strong> Higher-genus test meshes
-                    (genus $\geq 2$ closed surfaces) aren't cleanly available
-                    in any open repository we could find. We'll add a
-                    <code>make_n_torus(g, …)</code> procedural generator when
-                    Phase 2.13 (the canonical embedding gallery) needs it
-                    rather than committing a folder of hand-crafted OBJs now.
+                    Higher-genus test meshes (genus $\geq 2$ closed surfaces)
+                    aren't cleanly available in any open mesh repository we
+                    could find. We will add a <code>make_n_torus(g, …)</code>
+                    procedural generator when the canonical-embedding gallery
+                    needs it, rather than committing a folder of
+                    hand-crafted OBJs now.
                 </p>
             </section>
 
@@ -582,9 +600,9 @@
                             <strong>Core engine.</strong>
                             Mesh infrastructure, discrete TPE with BVH
                             acceleration, gradient computation, FD-checked
-                            end to end.
-                            $L^2$ gradient flow on an ellipsoid reproduces
-                            the expected stall that motivates Phase 2.
+                            end to end. $L^2$ gradient flow on the ellipsoid
+                            reproduces the expected stall that motivates the
+                            preconditioner work in Week 2.
                         </div>
                     </div>
                     <div class="week now">
@@ -594,12 +612,12 @@
                             Cotan Laplacian, fractional operators $B$ and
                             $B_0$ with hierarchical compression for the
                             $L^\sigma$ matvec, preconditioned GMRES,
-                            barycenter constraint via Schur complement,
-                            dynamic remeshing (split/collapse + Delaunay
-                            flip + tangential smoothing). Cross-validate
-                            TPE against Repulsor. By end of week: one
-                            Phase&nbsp;2 canonical embedding (genus&nbsp;0 or
-                            1) converged.
+                            barycenter constraint via Schur complement, and
+                            dynamic remeshing (edge split/collapse, Delaunay
+                            flip, tangential smoothing). Cross-validate TPE
+                            against Repulsor. By end of week: one canonical
+                            embedding (genus 0 or 1) converged under the
+                            preconditioned descent.
                         </div>
                     </div>
                     <div class="week">
@@ -609,35 +627,35 @@
                             Canonical-embedding gallery through genus 5
                             (sphere, torus, triangular prism, tetrahedral,
                             and up). Start the CUDA port of the Barnes-Hut
-                            energy and gradient over the block-cluster tree
-                            — the single biggest CPU bottleneck per RS
-                            Fig.&nbsp;33.
+                            energy and gradient over the block-cluster tree,
+                            the single biggest CPU bottleneck per Repulsive
+                            Shells Fig. 33.
                         </div>
                     </div>
                     <div class="week">
                         <div class="week-label">Week 4</div>
                         <div class="week-content">
                             <strong>Shells + hero demos.</strong>
-                            Membrane + bending shell energy, obstacle SDF
+                            Membrane-plus-bending shell energy, obstacle SDF
                             barrier, adaptive near-field TPE quadrature.
-                            Target: ball-through-tube (RS Fig.&nbsp;4
-                            extrapolation). Cloth eversion (RS Fig.&nbsp;1
+                            Target: ball-through-tube (Repulsive Shells Fig.
+                            4, extrapolation). Cloth eversion (Fig. 1,
                             interpolation) and the trust-region path-energy
-                            solver follow if time permits; GPU port of the
-                            $L^\sigma$ matvec in parallel.
+                            solver follow if time permits; the GPU port of
+                            the $L^\sigma$ matvec runs in parallel.
                         </div>
                     </div>
                 </div>
 
                 <p style="margin-top: 1.25rem">
-                    <strong>Risk.</strong> Phase 2's hierarchical-compression
-                    step for the $L^\sigma$ matvec is the single trickiest
-                    piece of the whole pipeline — any bug silently tanks the
-                    preconditioned GMRES iteration count. We plan to gate it
-                    the same way we gated Phase 1: a $\theta = 0$
-                    fast-vs-brute check to machine precision, and a
-                    $\theta = 0.5$ check below 1% relative error, before any
-                    downstream code uses it.
+                    <strong>Risk.</strong> The hierarchical-compression step
+                    for the $L^\sigma$ matvec is the single trickiest piece
+                    of the whole pipeline; any bug silently tanks the
+                    preconditioned GMRES iteration count without throwing.
+                    We plan to gate it the same way we gated the Barnes-Hut
+                    gradient: a $\theta = 0$ fast-versus-brute check to
+                    machine precision, and a $\theta = 0.5$ check below 1%
+                    relative error, before any downstream code uses it.
                 </p>
             </section>
         </div>
