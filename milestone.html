@@ -395,8 +395,7 @@
                     discrete tangent-point energy with Barnes-Hut acceleration,
                     including the gradient. Put together, we can flow a mesh
                     along $-\nabla \hat\Phi$ at $O(n \log n)$ cost per
-                    iteration. The proposal scheduled this for Week 1; we hit
-                    it on day 1.
+                    iteration.
                 </p>
 
                 <h3>Mesh data structure and OpenMesh bridge</h3>
@@ -541,21 +540,20 @@
 
             <section id="reflection">
                 <div class="section-num">03 — Reflection</div>
-                <h2>On track, with one planned addition</h2>
+                <h2>What worked, and one addition</h2>
 
                 <p>
-                    We're well ahead of the proposal's Week 1 schedule: the
-                    "flow a mesh toward a TPE minimum" goal was hit in a
-                    single day rather than a full week. That pace was only
-                    safe because every analytical derivative went through a
+                    Every analytical derivative we wrote went through a
                     mandatory finite-difference gate before anything
                     downstream depended on it. At $\alpha = 6$ the TPE
                     kernel has extreme stiffness at short range, so a sign
                     error in the chain rule silently stalls descent rather
-                    than throwing. The gate caught three such errors during
-                    the day's work; without it we'd have spent the banked
-                    time debugging a broken gradient with no obvious
-                    culprit.
+                    than throwing; the gate caught three such errors during
+                    development, each of which would have manifested much
+                    later as a mangled gradient-flow demo with no obvious
+                    culprit. Carrying this discipline into the rest of the
+                    pipeline is the single most important thing we can take
+                    from the work so far.
                 </p>
 
                 <h3>One addition to the plan</h3>
@@ -597,10 +595,9 @@
                 <h2>What's left before May 4</h2>
 
                 <p>
-                    The final is due in two weeks, on May 4. With the
-                    proposal's Week 1 work compressed into a day, the
-                    critical path to a respectable submission is four
-                    items, roughly in the order we will tackle them:
+                    The final is due in two weeks, on May 4. The critical
+                    path to a respectable submission is four items, roughly
+                    in the order we will tackle them:
                 </p>
 
                 <h3>$H^s$-preconditioned descent</h3>
