@@ -29,3 +29,6 @@ assets/spot.obj
 CLAUDE.md
 .claude/
 PHASE_NOTES.md
+
+# Local-only: mirrors milestone.html -> coherentmonkey.github.io/184/project/
+sync_milestone.sh
