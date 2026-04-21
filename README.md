@@ -13,14 +13,13 @@ the original project proposal is `proposal.html`.
 
 ## Status
 
-- **Phase 0 — infrastructure:** done. SoA mesh representation, OpenMesh bridge,
-  finite-difference gradient checker, procedural test meshes.
-- **Phase 1 — CPU tangent-point energy + BVH:** done. Brute-force and Barnes-Hut
-  versions of both the TPE energy and its gradient, at `O(n log n)` via a block-cluster
-  tree. `test_phase0` (20/20) and `test_phase1` (47/47) gate every piece against a FD
-  check, scale covariance, translation invariance, or BVH-aggregate conservation.
-- **Phase 2 — H^s preconditioner + constraints + remeshing:** in progress.
-- **Phase 3+** — shell energy, path-energy trust-region solver, CUDA port.
+- **Done:** infrastructure (SoA mesh representation, OpenMesh bridge, finite-difference
+  gradient checker, procedural test meshes) and CPU tangent-point energy + BVH
+  (brute-force and Barnes-Hut versions of both the TPE energy and its gradient, at
+  `O(n log n)` via a block-cluster tree). The test binaries gate every piece against
+  FD checks, scale covariance, translation invariance, and BVH-aggregate conservation.
+- **In progress:** H^s preconditioner, constraints, and remeshing.
+- **Next:** shell energy, path-energy trust-region solver, CUDA port.
 
 ## Repo layout
 
@@ -71,7 +70,7 @@ cmake --build build
 ./build/test_phase1             # 47/47 checks — FaceGeom, TPE brute, BVH, BCT, BH energy/grad
 ```
 
-Both run in well under a second and are the regression gate for every phase after them.
+Both run in well under a second and are the regression gate for everything built on top of them.
 
 ### 2. View a single mesh
 
@@ -84,9 +83,9 @@ Viewer controls: left-click-drag orbits around the target, right-click-drag pans
 scroll zooms, WASD moves the camera. Blinn-Phong shading with a fixed directional
 light.
 
-### 3. Run the Phase 1.8 gradient-flow demo and play the result back
+### 3. Run the gradient-flow demo and play the result back
 
-This is the end-to-end demo of everything in Phase 1: a Barnes-Hut TPE gradient drives
+This is the end-to-end demo of the CPU TPE pipeline: a Barnes-Hut TPE gradient drives
 an Armijo-line-searched `L^2` descent on an **ellipsoid** (icosphere(2) with axis
 scales `(1.7, 0.75, 0.75)` — 162 verts / 320 tris, procedurally generated, deterministic).
 A `frame_XXXX.obj` per iteration and an `energy.csv` are written to `out/phase1_flow/`,
@@ -109,7 +108,7 @@ What you should see playing back: the ellipsoid rounds toward a sphere (the
 genus-0 TPE minimizer) over ~95 iterations. Energy drops several fold then
 stalls well above the round-sphere minimum, with the Armijo step size τ
 collapsing to ~1e-12. The stall is the *expected* `L^2` failure mode (RSu
-Fig. 5) — exactly what motivates the H^s preconditioner in the next phase.
+Fig. 5) — exactly what motivates the H^s preconditioner that comes next.
 
 The demo runs from the repo root in under a minute on a single CPU core
 (320 triangles through a `θ = 0.5` Barnes-Hut eval each iteration).
