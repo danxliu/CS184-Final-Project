@@ -395,7 +395,8 @@
                     discrete tangent-point energy with Barnes-Hut acceleration,
                     including the gradient. Put together, we can flow a mesh
                     along $-\nabla \hat\Phi$ at $O(n \log n)$ cost per
-                    iteration, which was the Week 1 target from the proposal.
+                    iteration. The proposal scheduled this for Week 1; we hit
+                    it on day 1.
                 </p>
 
                 <h3>Mesh data structure and OpenMesh bridge</h3>
@@ -543,17 +544,18 @@
                 <h2>On track, with one planned addition</h2>
 
                 <p>
-                    We're on schedule relative to the proposal's Week 1 goal
-                    of "flowing a mesh toward a TPE minimum", and the
-                    gradient is FD-checked everywhere it matters. The energy
-                    work consumed the full week rather than a few days, which
-                    was the right call: at $\alpha = 6$ the kernel has
-                    extreme stiffness at short range, and every sign error in
-                    the chain rule shows up as stalled descent rather than as
-                    an exception. Catching those with a mandatory FD gate on
-                    every analytical derivative before anything depends on it
-                    is what made the gradient-flow demo work on the first
-                    try.
+                    We're well ahead of the proposal's Week 1 schedule: the
+                    "flow a mesh toward a TPE minimum" goal was hit in a
+                    single day rather than a full week. That pace was only
+                    safe because every analytical derivative went through a
+                    mandatory finite-difference gate before anything
+                    downstream depended on it. At $\alpha = 6$ the TPE
+                    kernel has extreme stiffness at short range, so a sign
+                    error in the chain rule silently stalls descent rather
+                    than throwing. The gate caught three such errors during
+                    the day's work; without it we'd have spent the banked
+                    time debugging a broken gradient with no obvious
+                    culprit.
                 </p>
 
                 <h3>One addition to the plan</h3>
@@ -574,8 +576,9 @@
                     $\nabla\hat\Phi$ to the Barnes-Hut tolerance at matching
                     $\theta$. Repulsor is loaded as an external checkout, not
                     vendored. This was not in the original proposal; it
-                    replaces "more genus-gallery meshes" as our Week 2
-                    validation milestone.
+                    replaces "more genus-gallery meshes" as our first
+                    correctness check before optimization results go into
+                    the write-up.
                 </p>
 
                 <h3>One small slip</h3>
@@ -591,71 +594,79 @@
 
             <section id="plan">
                 <div class="section-num">04 — Updated plan</div>
-                <h2>Four weeks out</h2>
+                <h2>What's left before May 4</h2>
 
-                <div class="schedule">
-                    <div class="week done">
-                        <div class="week-label">Week 1</div>
-                        <div class="week-content">
-                            <strong>Core engine.</strong>
-                            Mesh infrastructure, discrete TPE with BVH
-                            acceleration, gradient computation, FD-checked
-                            end to end. $L^2$ gradient flow on the ellipsoid
-                            reproduces the expected stall that motivates the
-                            preconditioner work in Week 2.
-                        </div>
-                    </div>
-                    <div class="week now">
-                        <div class="week-label">Week 2</div>
-                        <div class="week-content">
-                            <strong>Optimization.</strong>
-                            Cotan Laplacian, fractional operators $B$ and
-                            $B_0$ with hierarchical compression for the
-                            $L^\sigma$ matvec, preconditioned GMRES,
-                            barycenter constraint via Schur complement, and
-                            dynamic remeshing (edge split/collapse, Delaunay
-                            flip, tangential smoothing). Cross-validate TPE
-                            against Repulsor. By end of week: one canonical
-                            embedding (genus 0 or 1) converged under the
-                            preconditioned descent.
-                        </div>
-                    </div>
-                    <div class="week">
-                        <div class="week-label">Week 3</div>
-                        <div class="week-content">
-                            <strong>Gallery + GPU.</strong>
-                            Canonical-embedding gallery through genus 5
-                            (sphere, torus, triangular prism, tetrahedral,
-                            and up). Start the CUDA port of the Barnes-Hut
-                            energy and gradient over the block-cluster tree,
-                            the single biggest CPU bottleneck per Repulsive
-                            Shells Fig. 33.
-                        </div>
-                    </div>
-                    <div class="week">
-                        <div class="week-label">Week 4</div>
-                        <div class="week-content">
-                            <strong>Shells + hero demos.</strong>
-                            Membrane-plus-bending shell energy, obstacle SDF
-                            barrier, adaptive near-field TPE quadrature.
-                            Target: ball-through-tube (Repulsive Shells Fig.
-                            4, extrapolation). Cloth eversion (Fig. 1,
-                            interpolation) and the trust-region path-energy
-                            solver follow if time permits; the GPU port of
-                            the $L^\sigma$ matvec runs in parallel.
-                        </div>
-                    </div>
-                </div>
+                <p>
+                    The final is due in two weeks, on May 4. With the
+                    proposal's Week 1 work compressed into a day, the
+                    critical path to a respectable submission is four
+                    items, roughly in the order we will tackle them:
+                </p>
 
-                <p style="margin-top: 1.25rem">
-                    <strong>Risk.</strong> The hierarchical-compression step
-                    for the $L^\sigma$ matvec is the single trickiest piece
-                    of the whole pipeline; any bug silently tanks the
-                    preconditioned GMRES iteration count without throwing.
-                    We plan to gate it the same way we gated the Barnes-Hut
-                    gradient: a $\theta = 0$ fast-versus-brute check to
-                    machine precision, and a $\theta = 0.5$ check below 1%
-                    relative error, before any downstream code uses it.
+                <h3>$H^s$-preconditioned descent</h3>
+                <p>
+                    Cotan Laplacian assembly, brute-force fractional
+                    operators $B$ and $B_0$, hierarchical compression for
+                    the $L^\sigma$ matvec, and preconditioned GMRES with
+                    barycenter constraint via Schur complement. This is
+                    the biggest single item remaining and the one on our
+                    risk list below; once it's in, the $L^2$ stall in the
+                    figure above should disappear and canonical
+                    minimizers become reachable.
+                </p>
+
+                <h3>Cross-validate TPE against Repulsor</h3>
+                <p>
+                    Run the same OBJ meshes through our pipeline and
+                    through the reference CPU implementation, comparing
+                    $\hat\Phi$ and $\nabla\hat\Phi$ to the Barnes-Hut
+                    tolerance at matching $\theta$. Turns an internal-
+                    consistency claim into a real correctness check
+                    before any optimization results go into the write-up.
+                </p>
+
+                <h3>Canonical embedding gallery</h3>
+                <p>
+                    Sphere (genus 0), torus of revolution (genus 1), and
+                    as many higher-genus minimizers as the preconditioner
+                    handles cleanly. The <code>make_n_torus(g, …)</code>
+                    procedural generator gets written here; reproducing
+                    the tetrahedral genus-3 minimizer from the Repulsive
+                    Surfaces gallery is the "wow moment" we're aiming
+                    for.
+                </p>
+
+                <h3>GPU port of Barnes-Hut</h3>
+                <p>
+                    The admissible-pair plus leaf-leaf sum is the single
+                    biggest CPU bottleneck per Repulsive Shells Fig. 33,
+                    and it's embarrassingly parallel at the pair level.
+                    The port begins in parallel with the optimization
+                    work, using the stabilized CPU pipeline as the
+                    ground-truth reference.
+                </p>
+
+                <p>
+                    <strong>Stretch, if the critical path stays clean.</strong>
+                    Dynamic remeshing (edge split/collapse, Delaunay
+                    flip, tangential smoothing), the membrane-plus-
+                    bending shell energy, and the ball-through-tube
+                    extrapolation demo (Repulsive Shells Fig. 4). The
+                    trust-region path-energy solver for cloth eversion
+                    is unlikely in the remaining window and would be
+                    post-deadline work.
+                </p>
+
+                <p>
+                    <strong>Risk.</strong> The hierarchical-compression
+                    step for the $L^\sigma$ matvec is the single
+                    trickiest piece of the whole pipeline; any bug
+                    silently tanks the preconditioned GMRES iteration
+                    count without throwing. We plan to gate it the same
+                    way we gated the Barnes-Hut gradient: a $\theta = 0$
+                    fast-versus-brute check to machine precision, and a
+                    $\theta = 0.5$ check below 1% relative error, before
+                    any downstream code uses it.
                 </p>
             </section>
         </div>
