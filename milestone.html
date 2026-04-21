@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Limitless: Infinity | CS 184 Final Project Milestone</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        />
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+            onload="
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                    ],
+                })
+            "
+        ></script>
+        <style>
+            :root {
+                --bg: #f0f2f5;
+                --surface: #e6e9ee;
+                --border: #cdd2d9;
+                --text: #1e2a38;
+                --text-dim: #4a5568;
+                --label: #8896a7;
+                --nav-bg: rgba(240, 242, 245, 0.9);
+                --dot-color: rgba(141, 160, 183, 0.35);
+            }
+            .dark {
+                --bg: #191d24;
+                --surface: #21262e;
+                --border: #2e3440;
+                --text: #bfc5ce;
+                --text-dim: #8891a0;
+                --label: #5c6470;
+                --nav-bg: rgba(25, 29, 36, 0.9);
+                --dot-color: rgba(90, 105, 125, 0.3);
+            }
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html {
+                scroll-behavior: smooth;
+            }
+
+            body {
+                font-family: "Alegreya Sans", sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                line-height: 1.75;
+                font-size: 18.5px;
+                font-weight: 400;
+                -webkit-font-smoothing: antialiased;
+                transition:
+                    background 0.3s,
+                    color 0.3s;
+            }
+
+            ::selection {
+                background: var(--text);
+                color: var(--bg);
+            }
+
+            nav {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 100;
+                padding: 1rem 2rem;
+                display: flex;
+                gap: 1.5rem;
+                align-items: center;
+                background: var(--nav-bg);
+                backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--border);
+                font-size: 0.82rem;
+                letter-spacing: 0.03em;
+            }
+            nav a {
+                color: var(--text-dim);
+                text-decoration: none;
+                transition: color 0.2s;
+            }
+            nav a:hover {
+                color: var(--text);
+            }
+            nav .brand {
+                color: var(--text);
+                font-weight: 500;
+                margin-right: auto;
+                font-size: 0.85rem;
+            }
+
+            .hero {
+                min-height: 60vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding: 7rem 2rem 3rem;
+                max-width: 860px;
+                margin: 0 auto;
+            }
+            .hero-label {
+                font-size: 0.75rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 1.5rem;
+            }
+            .hero h1 {
+                font-size: clamp(2.5rem, 7vw, 4.5rem);
+                line-height: 1.05;
+                font-weight: 400;
+                margin-bottom: 1rem;
+                letter-spacing: -0.02em;
+            }
+            .hero-sub {
+                font-size: 1.05rem;
+                color: var(--text-dim);
+                max-width: 620px;
+                line-height: 1.75;
+                margin-bottom: 2rem;
+            }
+            .team {
+                display: flex;
+                gap: 2rem;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .team-member .name {
+                font-weight: 500;
+                font-size: 0.92rem;
+            }
+            .content {
+                max-width: 740px;
+                margin: 0 auto;
+                padding: 0 2rem 6rem;
+            }
+            section {
+                margin-bottom: 3.5rem;
+            }
+
+            .section-num {
+                font-size: 0.7rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 0.5rem;
+            }
+            h2 {
+                font-size: 1.65rem;
+                font-weight: 400;
+                margin-bottom: 1rem;
+                line-height: 1.2;
+            }
+            h3 {
+                font-size: 0.95rem;
+                font-weight: 600;
+                margin-top: 1.25rem;
+                margin-bottom: 0.5rem;
+            }
+            p {
+                margin-bottom: 1rem;
+                color: var(--text-dim);
+            }
+            p strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            ul {
+                color: var(--text-dim);
+                padding-left: 1.25rem;
+                margin-bottom: 1rem;
+            }
+            ul li {
+                margin-bottom: 0.4rem;
+            }
+            ul li strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            a {
+                color: var(--text);
+                text-decoration: underline;
+                text-decoration-color: var(--border);
+                text-underline-offset: 3px;
+                transition: text-decoration-color 0.2s;
+            }
+            a:hover {
+                text-decoration-color: var(--text);
+            }
+            code {
+                font-family:
+                    "SF Mono", "Consolas", "Menlo", ui-monospace, monospace;
+                font-size: 0.88em;
+                color: var(--text);
+                background: var(--surface);
+                padding: 0.05em 0.35em;
+                border-radius: 2px;
+            }
+
+            .katex-display {
+                margin: 0.5rem 0 !important;
+                overflow: hidden !important;
+            }
+
+            .week {
+                display: grid;
+                grid-template-columns: 90px 1fr;
+                gap: 1.5rem;
+                padding: 1rem 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .week:last-child {
+                border-bottom: none;
+            }
+            .week-label {
+                font-size: 0.78rem;
+                color: var(--text);
+                padding-top: 0.1rem;
+            }
+            .week-content {
+                font-size: 0.97rem;
+                color: var(--text-dim);
+                line-height: 1.65;
+            }
+            .week-content strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            .done .week-label::after {
+                content: " · done";
+                color: var(--label);
+                font-size: 0.68rem;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+            }
+            .now .week-label::after {
+                content: " · now";
+                color: var(--text);
+                font-size: 0.68rem;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+            }
+
+            .plot {
+                margin: 1rem 0 0.5rem;
+                padding: 0.75rem;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 3px;
+            }
+            .plot img {
+                width: 100%;
+                height: auto;
+                display: block;
+                border-radius: 2px;
+            }
+            .plot-caption {
+                font-size: 0.82rem;
+                color: var(--text-dim);
+                margin-top: 0.6rem;
+                line-height: 1.55;
+            }
+
+            .divider {
+                height: 1px;
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    var(--border),
+                    transparent
+                );
+                margin: 3rem 0;
+            }
+
+            .links {
+                display: flex;
+                gap: 1.25rem;
+                flex-wrap: wrap;
+                margin-top: 1rem;
+                font-size: 0.9rem;
+            }
+
+            @media (max-width: 640px) {
+                .week {
+                    grid-template-columns: 1fr;
+                    gap: 0.3rem;
+                }
+                .team {
+                    flex-direction: column;
+                    gap: 0.75rem;
+                    align-items: flex-start;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <span
+                class="brand"
+                id="dark-toggle"
+                style="cursor: pointer; line-height: 0"
+                ><svg
+                    width="24"
+                    height="14"
+                    viewBox="0 0 24 14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                >
+                    <path
+                        d="M12 7C12 4 9.5 1 6.5 1S1 4 1 7s2.5 6 5.5 6S12 10 12 7Zm0 0c0 3 2.5 6 5.5 6S23 10 23 7s-2.5-6-5.5-6S12 4 12 7Z"
+                    /></svg
+            ></span>
+            <a href="#accomplishments">Accomplishments</a>
+            <a href="#results">Results</a>
+            <a href="#reflection">Reflection</a>
+            <a href="#plan">Plan</a>
+        </nav>
+
+        <div class="hero">
+            <div class="hero-label">
+                CS 184 · Spring 2026 · Milestone Report
+            </div>
+            <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
+            <p class="hero-sub">
+                Repulsive Shells on the GPU — a C++/(soon-)CUDA implementation
+                of the tangent-point energy pipeline for collision-free shape
+                optimization, interpolation, and averaging.
+            </p>
+            <div class="team">
+                <span
+                    style="
+                        color: var(--text-dim);
+                        font-size: 0.92rem;
+                        font-weight: 500;
+                    "
+                    >Team:</span
+                >
+                <div class="team-member">
+                    <span class="name">Atharv Sampath</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Michael Pham</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Daniel Liu</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Elen Papyan</span>
+                </div>
+            </div>
+            <div class="links">
+                <a href="proposal.html">Project proposal</a>
+                <a
+                    href="https://github.com/danxliu/CS184-Final-Project"
+                    target="_blank"
+                    >GitHub repo</a
+                >
+                <a
+                    href="https://www.dropbox.com/scl/fo/placeholder/milestone-video"
+                    target="_blank"
+                    >Milestone video</a
+                >
+                <a
+                    href="https://docs.google.com/presentation/d/placeholder/milestone-slides"
+                    target="_blank"
+                    >Milestone slides</a
+                >
+            </div>
+        </div>
+
+        <div class="content">
+            <section id="accomplishments">
+                <div class="section-num">01 — Accomplishments</div>
+                <h2>CPU pipeline end-to-end through Phase 1</h2>
+
+                <p>
+                    Two phases of the roadmap are complete and gated by regression
+                    tests: <strong>Phase 0</strong> (infrastructure) and
+                    <strong>Phase 1</strong> (discrete tangent-point energy with
+                    Barnes-Hut acceleration, including the gradient). Together they
+                    get us to
+                    <em>"flow a mesh along $-\nabla \hat\Phi$ at $O(n \log n)$"</em>,
+                    which is the Week&nbsp;1 target from the proposal.
+                </p>
+
+                <h3>Phase 0 — infrastructure</h3>
+                <ul>
+                    <li>
+                        <strong>SoA mesh</strong> (<code>MeshData</code>: $V, F,
+                        N, L_0$) with an OpenMesh round-trip bridge for later
+                        topology-aware remeshing.
+                    </li>
+                    <li>
+                        <strong>Finite-difference gradient checker</strong> with
+                        central differences — the validation gate every
+                        analytical gradient below has to pass before anything
+                        downstream depends on it.
+                    </li>
+                    <li>
+                        <strong>Procedural test meshes</strong>: icosphere (any
+                        subdivision level) and torus with analytic normals.
+                    </li>
+                </ul>
+
+                <h3>Phase 1 — CPU TPE + BVH</h3>
+                <ul>
+                    <li>
+                        <strong>Per-face geometry</strong> with closed-form
+                        Jacobians for centroid, unit normal, and area with
+                        respect to each incident vertex.
+                    </li>
+                    <li>
+                        <strong>Brute-force TPE</strong> $\hat\Phi(x)$ and
+                        $\nabla \hat\Phi(x)$ at $\alpha = 6$ via midpoint
+                        quadrature over ordered face pairs.
+                    </li>
+                    <li>
+                        <strong>SAH BVH</strong> over face AABBs with cluster
+                        aggregates (area, area-weighted centroid, unweighted
+                        normal-sum, radius) cached per node for the Barnes-Hut
+                        pass.
+                    </li>
+                    <li>
+                        <strong>Block-cluster tree</strong> over BVH$\times$BVH
+                        with the RSu radius-form multipole acceptance criterion
+                        $\max(r_U, r_V) < \theta \, \|c_U - c_V\|$ at
+                        $\theta = 0.5$.
+                    </li>
+                    <li>
+                        <strong>Barnes-Hut energy + gradient</strong> at
+                        $O(n \log n)$. Approximates admissible pairs by a
+                        0th-order cluster proxy, sums the remaining leaf-leaf
+                        pairs exactly.
+                    </li>
+                    <li>
+                        <strong>Viewer</strong> (NanoGUI + OpenGL) with
+                        Blinn-Phong shading and a frame-sequence playback mode
+                        (scrubber + <code>Space</code>/<code>←</code>/<code>→</code>
+                        keys) used to debug the gradient flow below.
+                    </li>
+                </ul>
+            </section>
+
+            <section id="results">
+                <div class="section-num">02 — Preliminary results</div>
+                <h2>What we can measure now</h2>
+
+                <p>
+                    <strong>Regression tests: 20/20 + 47/47 checks pass.</strong>
+                    <code>test_phase0</code> exercises the OpenMesh round-trip,
+                    the normalization + $L_0$ cache, the FD checker on a known
+                    quadratic, and the test-mesh factories.
+                    <code>test_phase1</code> adds 35 checks: FD gradient on
+                    face geometry and on brute-force TPE, scale-covariance
+                    $\hat\Phi(\lambda x) = \lambda^{4-\alpha}\hat\Phi(x)$
+                    (zero relative error, as expected from the closed-form
+                    scaling), translation invariance, aggregate conservation in
+                    the BVH, exact exhaustive pair coverage in the BCT, and
+                    Barnes-Hut-vs-brute cross-checks.
+                </p>
+
+                <p>
+                    <strong>Barnes-Hut accuracy.</strong> At $\theta = 0$ the
+                    Barnes-Hut energy matches brute force to
+                    $\sim 3 \times 10^{-15}$ relative error on a 192-face torus
+                    (pure floating-point summation-order noise). At
+                    $\theta = 0.5$ on icosphere$(3)$ (1280 faces) the
+                    relative error is $1.0 \times 10^{-3}$, matching the
+                    RSu $\S 5.2$ accuracy claim. A $\theta$-sweep on a thin
+                    torus gives monotone convergence:
+                    $\theta = 0.8 \to 6.9\%$, $\theta = 0.5 \to 4.4\%$,
+                    $\theta = 0.1 \to 1.1 \times 10^{-4}$.
+                </p>
+
+                <p>
+                    <strong>Gradient flow demo.</strong> We descend
+                    $\hat\Phi$ with Armijo-backtracked $L^2$ gradient descent on
+                    an <em>ellipsoid</em> built by scaling icosphere$(2)$ along
+                    its principal axes by $(1.7, 0.75, 0.75)$. The uniform
+                    scaling mode is projected out of the gradient each step so
+                    descent moves shape, not size (TPE is scale-covariant with
+                    exponent $\lambda^{-2}$, so raw descent would inflate the
+                    mesh forever).
+                </p>
+
+                <div class="plot">
+                    <img
+                        src="https://coherentmonkey.github.io/184/project/energy.png"
+                        alt="Phase 1.8 L² flow — energy / gradient norm / step size / XZ silhouettes over 95 iterations."
+                    />
+                    <div class="plot-caption">
+                        <strong>Figure.</strong> Phase 1.8 $L^2$ gradient flow
+                        on the ellipsoid, 95 iterations. The energy drops
+                        several-fold before stalling; the Armijo step size
+                        $\tau$ collapses to $\sim\!10^{-12}$ even though
+                        $\|\nabla\hat\Phi\|$ stays $O(10^{1\text{–}3})$. This
+                        is the expected $L^2$ failure mode (RSu Fig.&nbsp;5):
+                        the per-vertex descent step, being mesh-resolution
+                        dependent, can't make progress against the TPE's
+                        high-frequency stiffness at fine mesh scales. The
+                        $H^{s}$ preconditioner in the next phase cures it.
+                    </div>
+                </div>
+            </section>
+
+            <section id="reflection">
+                <div class="section-num">03 — Reflection</div>
+                <h2>On track, with one planned addition</h2>
+
+                <p>
+                    We're on schedule relative to the proposal's Week&nbsp;1
+                    goal — <em>"flowing a mesh toward a TPE minimum"</em> — and
+                    the gradient is FD-checked everywhere it matters. Phase 1
+                    consumed the full week rather than a few days, which was
+                    the right call: at $\alpha = 6$ the kernel has extreme
+                    stiffness at short range, and every sign error in the
+                    chain rule shows up as stalled descent rather than an
+                    exception. Catching those with a mandatory FD gate on
+                    every analytical derivative before anything depends on it
+                    is what made the Phase 1.8 demo work on the first try.
+                </p>
+
+                <p>
+                    <strong>One addition to the plan.</strong> Our FD checks
+                    prove <em>internal consistency</em> (the analytical
+                    gradient matches the finite difference), not
+                    <em>correctness</em> (the kernel itself is right). A bug
+                    that flips a sign in both energy and gradient consistently
+                    is undetectable by FD. Before Phase 2 starts we will
+                    cross-validate against the reference CPU implementation
+                    (<a
+                        href="https://github.com/HenrikSchumacher/Repulsor"
+                        target="_blank"
+                        >HenrikSchumacher/Repulsor</a
+                    >) on a handful of meshes — running the same OBJs through
+                    both pipelines and comparing $\hat\Phi$ and
+                    $\nabla\hat\Phi$ to the Barnes-Hut tolerance at matching
+                    $\theta$. Repulsor is loaded as an external checkout (not
+                    vendored). This was not in the original proposal; it
+                    replaces "more genus-gallery meshes" as the Week&nbsp;2
+                    validation milestone.
+                </p>
+
+                <p>
+                    <strong>Small slip.</strong> Higher-genus test meshes
+                    (genus $\geq 2$ closed surfaces) aren't cleanly available
+                    in any open repository we could find. We'll add a
+                    <code>make_n_torus(g, …)</code> procedural generator when
+                    Phase 2.13 (the canonical embedding gallery) needs it
+                    rather than committing a folder of hand-crafted OBJs now.
+                </p>
+            </section>
+
+            <section id="plan">
+                <div class="section-num">04 — Updated plan</div>
+                <h2>Four weeks out</h2>
+
+                <div class="schedule">
+                    <div class="week done">
+                        <div class="week-label">Week 1</div>
+                        <div class="week-content">
+                            <strong>Core engine.</strong>
+                            Mesh infrastructure, discrete TPE with BVH
+                            acceleration, gradient computation, FD-checked
+                            end to end.
+                            $L^2$ gradient flow on an ellipsoid reproduces
+                            the expected stall that motivates Phase 2.
+                        </div>
+                    </div>
+                    <div class="week now">
+                        <div class="week-label">Week 2</div>
+                        <div class="week-content">
+                            <strong>Optimization.</strong>
+                            Cotan Laplacian, fractional operators $B$ and
+                            $B_0$ with hierarchical compression for the
+                            $L^\sigma$ matvec, preconditioned GMRES,
+                            barycenter constraint via Schur complement,
+                            dynamic remeshing (split/collapse + Delaunay
+                            flip + tangential smoothing). Cross-validate
+                            TPE against Repulsor. By end of week: one
+                            Phase&nbsp;2 canonical embedding (genus&nbsp;0 or
+                            1) converged.
+                        </div>
+                    </div>
+                    <div class="week">
+                        <div class="week-label">Week 3</div>
+                        <div class="week-content">
+                            <strong>Gallery + GPU.</strong>
+                            Canonical-embedding gallery through genus 5
+                            (sphere, torus, triangular prism, tetrahedral,
+                            and up). Start the CUDA port of the Barnes-Hut
+                            energy and gradient over the block-cluster tree
+                            — the single biggest CPU bottleneck per RS
+                            Fig.&nbsp;33.
+                        </div>
+                    </div>
+                    <div class="week">
+                        <div class="week-label">Week 4</div>
+                        <div class="week-content">
+                            <strong>Shells + hero demos.</strong>
+                            Membrane + bending shell energy, obstacle SDF
+                            barrier, adaptive near-field TPE quadrature.
+                            Target: ball-through-tube (RS Fig.&nbsp;4
+                            extrapolation). Cloth eversion (RS Fig.&nbsp;1
+                            interpolation) and the trust-region path-energy
+                            solver follow if time permits; GPU port of the
+                            $L^\sigma$ matvec in parallel.
+                        </div>
+                    </div>
+                </div>
+
+                <p style="margin-top: 1.25rem">
+                    <strong>Risk.</strong> Phase 2's hierarchical-compression
+                    step for the $L^\sigma$ matvec is the single trickiest
+                    piece of the whole pipeline — any bug silently tanks the
+                    preconditioned GMRES iteration count. We plan to gate it
+                    the same way we gated Phase 1: a $\theta = 0$
+                    fast-vs-brute check to machine precision, and a
+                    $\theta = 0.5$ check below 1% relative error, before any
+                    downstream code uses it.
+                </p>
+            </section>
+        </div>
+
+        <script>
+            document
+                .getElementById("dark-toggle")
+                .addEventListener("click", function () {
+                    document.body.classList.toggle("dark");
+                });
+        </script>
+    </body>
+</html>
