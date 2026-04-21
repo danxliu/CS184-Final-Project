@@ -33,6 +33,7 @@ in {
 
     # Viewer-side platform deps (windowing, GL dispatch, IPC)
     dbus
+    systemdMinimal
     libGL
     libGLU
     libxkbcommon
