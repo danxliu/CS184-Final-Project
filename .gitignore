@@ -15,3 +15,17 @@ build
 
 # Submodules
 ext/
+
+# Generated demo output (frame sequences, CSVs, plots)
+out/
+
+# Procedurally generated assets (rebuilt by `./build/dump_test_meshes`)
+assets/icosphere_*.obj
+assets/torus.obj
+# External meshes not used by any current code path
+assets/spot.obj
+
+# Claude
+CLAUDE.md
+.claude/
+PHASE_NOTES.md

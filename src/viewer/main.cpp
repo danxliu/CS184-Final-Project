@@ -4,7 +4,8 @@
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <mesh.obj>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <mesh.obj | frame_dir>" << std::endl;
+        std::cerr << "  Pass a directory of frame_XXXX.obj files for playback.\n";
         return -1;
     }
 

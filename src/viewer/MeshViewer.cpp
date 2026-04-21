@@ -1,14 +1,22 @@
 #include "MeshViewer.h"
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <nanogui/button.h>
+#include <nanogui/label.h>
+#include <nanogui/layout.h>
 #include <nanogui/opengl.h>
 #include <nanogui/renderpass.h>
 #include <nanogui/screen.h>
 #include <nanogui/shader.h>
+#include <nanogui/slider.h>
 #include <nanogui/vector.h>
+#include <nanogui/widget.h>
+#include <nanogui/window.h>
 #include <sstream>
 #include <vector>
 
@@ -50,7 +58,30 @@ void MeshViewer::read_mesh(const std::string &filename) {
   bool has_imported_normals =
       read_options.check(OpenMesh::IO::Options::VertexNormal);
   if (!has_imported_normals) {
-    mesh.update_normals();
+    // Area-weighted smooth vertex normals. OpenMesh's default update_normals
+    // does an unweighted face-normal average, which biases toward tiny
+    // triangles (Spot's ears/tail have much smaller faces than the body) and
+    // looks wrong. We weight each face's contribution by 2*area via the raw
+    // cross-product (cross = 2*area * unit_normal), accumulate per vertex,
+    // and normalize.
+    mesh.request_face_normals();
+    std::vector<Mesh::Normal> vn(mesh.n_vertices(), Mesh::Normal(0, 0, 0));
+    for (auto f_it = mesh.faces_begin(); f_it != mesh.faces_end(); ++f_it) {
+      auto fv = mesh.cfv_iter(*f_it);
+      const auto p0 = mesh.point(*fv); ++fv;
+      const auto p1 = mesh.point(*fv); ++fv;
+      const auto p2 = mesh.point(*fv);
+      const auto weighted = (p1 - p0) % (p2 - p0);  // 2*area*unit_normal
+      for (auto fv2 = mesh.cfv_iter(*f_it); fv2.is_valid(); ++fv2) {
+        vn[fv2->idx()] += weighted;
+      }
+    }
+    for (auto v_it = mesh.vertices_begin(); v_it != mesh.vertices_end(); ++v_it) {
+      auto n = vn[v_it->idx()];
+      const float len = n.norm();
+      if (len > 0.f) n /= len;
+      mesh.set_normal(*v_it, n);
+    }
   }
 
   for (Mesh::VertexIter v_it = mesh.vertices_begin();
@@ -76,23 +107,139 @@ void MeshViewer::read_mesh(const std::string &filename) {
 
 MeshViewer::MeshViewer(const std::string &filename)
     : Screen(Vector2i(800, 600), "Renderer", true, false, false, true, false) {
-  read_mesh(filename);
+  namespace fs = std::filesystem;
+  const bool is_sequence = fs::is_directory(filename);
+  if (is_sequence) {
+    if (!load_frame_sequence(filename)) {
+      std::cerr << "No frame_*.obj files found in " << filename << std::endl;
+      std::exit(-1);
+    }
+    read_mesh(m_frames[0]);
+  } else {
+    read_mesh(filename);
+  }
   m_index_count = m_indices.size();
   m_render_pass = new RenderPass({this}, this);
   m_render_pass->set_clear_color(0, m_background_color);
   m_render_pass->set_clear_depth(1.0f);
 
   m_shader =
-      new Shader(m_render_pass, "mesh_viewer", read_file("src/shader.vert"),
-                 read_file("src/shader.frag"));
+      new Shader(m_render_pass, "mesh_viewer",
+                 read_file("src/viewer/shader.vert"),
+                 read_file("src/viewer/shader.frag"));
+  upload_mesh_buffers();
+
+  if (is_sequence) {
+    build_playback_ui();
+    perform_layout();
+  }
+}
+
+void MeshViewer::upload_mesh_buffers() {
   m_shader->set_buffer("position", VariableType::Float32,
                        {m_vertices.size() / 3, 3}, m_vertices.data());
-
   m_shader->set_buffer("normal", VariableType::Float32,
                        {m_normals.size() / 3, 3}, m_normals.data());
-
   m_shader->set_buffer("indices", VariableType::UInt32, {m_indices.size()},
                        m_indices.data());
+  m_index_count = m_indices.size();
+}
+
+bool MeshViewer::load_frame_sequence(const std::string &dir) {
+  namespace fs = std::filesystem;
+  for (const auto &entry : fs::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) continue;
+    const std::string name = entry.path().filename().string();
+    if (name.rfind("frame_", 0) == 0 &&
+        entry.path().extension() == ".obj") {
+      m_frames.push_back(entry.path().string());
+    }
+  }
+  std::sort(m_frames.begin(), m_frames.end());
+  return !m_frames.empty();
+}
+
+void MeshViewer::load_frame(int idx) {
+  if (m_frames.empty()) return;
+  idx = std::clamp(idx, 0, static_cast<int>(m_frames.size()) - 1);
+  if (idx != m_frame_idx || m_vertices.empty()) {
+    m_frame_idx = idx;
+    read_mesh(m_frames[idx]);
+    upload_mesh_buffers();
+  }
+  if (m_frame_label) {
+    std::ostringstream oss;
+    oss << "frame " << (idx + 1) << " / " << m_frames.size();
+    m_frame_label->set_caption(oss.str());
+  }
+  if (m_frame_slider) {
+    const float t = m_frames.size() > 1
+                        ? static_cast<float>(idx) /
+                              static_cast<float>(m_frames.size() - 1)
+                        : 0.0f;
+    m_frame_slider->set_value(t);
+  }
+  redraw();
+}
+
+void MeshViewer::build_playback_ui() {
+  Window *panel = new Window(this, "Phase 1.8 playback");
+  panel->set_position(Vector2i(15, 15));
+  panel->set_fixed_width(260);
+  panel->set_layout(new GroupLayout(8, 6, 10, 8));
+
+  m_frame_label = new Label(panel, "", "sans-bold");
+  m_frame_slider = new Slider(panel);
+  m_frame_slider->set_range({0.0f, 1.0f});
+  m_frame_slider->set_callback([this](float t) {
+    const int n = static_cast<int>(m_frames.size());
+    if (n <= 0) return;
+    const int idx =
+        std::clamp(static_cast<int>(std::round(t * (n - 1))), 0, n - 1);
+    load_frame(idx);
+  });
+
+  Widget *row = new Widget(panel);
+  row->set_layout(
+      new BoxLayout(Orientation::Horizontal, Alignment::Middle, 0, 4));
+  Button *first = new Button(row, "|<");
+  first->set_callback([this]() { load_frame(0); });
+  Button *prev = new Button(row, "<");
+  prev->set_callback([this]() { load_frame(m_frame_idx - 1); });
+  m_play_button = new Button(row, "Play");
+  m_play_button->set_callback([this]() {
+    m_playing = !m_playing;
+    m_play_button->set_caption(m_playing ? "Pause" : "Play");
+    if (m_playing) m_last_advance_time = glfwGetTime();
+    redraw();
+  });
+  Button *next = new Button(row, ">");
+  next->set_callback([this]() { load_frame(m_frame_idx + 1); });
+  Button *last = new Button(row, ">|");
+  last->set_callback(
+      [this]() { load_frame(static_cast<int>(m_frames.size()) - 1); });
+
+  Widget *fps_row = new Widget(panel);
+  fps_row->set_layout(
+      new BoxLayout(Orientation::Horizontal, Alignment::Middle, 0, 6));
+  new Label(fps_row, "fps");
+  Slider *fps_slider = new Slider(fps_row);
+  fps_slider->set_range({2.0f, 60.0f});
+  fps_slider->set_value(m_fps);
+  fps_slider->set_fixed_width(130);
+  Label *fps_value = new Label(fps_row, "");
+  auto set_fps_label = [fps_value](float v) {
+    std::ostringstream oss;
+    oss << static_cast<int>(std::round(v));
+    fps_value->set_caption(oss.str());
+  };
+  set_fps_label(m_fps);
+  fps_slider->set_callback([this, set_fps_label](float v) {
+    m_fps = v;
+    set_fps_label(v);
+  });
+
+  load_frame(0);
 }
 
 Vector3f MeshViewer::camera_forward() const {
@@ -199,6 +346,33 @@ bool MeshViewer::keyboard_event(int key, int scancode, int action,
     return true;
   }
 
+  if (!m_frames.empty() && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_SPACE) {
+      m_playing = !m_playing;
+      if (m_play_button)
+        m_play_button->set_caption(m_playing ? "Pause" : "Play");
+      if (m_playing) m_last_advance_time = glfwGetTime();
+      redraw();
+      return true;
+    }
+    if (key == GLFW_KEY_RIGHT) {
+      load_frame(m_frame_idx + 1);
+      return true;
+    }
+    if (key == GLFW_KEY_LEFT) {
+      load_frame(m_frame_idx - 1);
+      return true;
+    }
+    if (key == GLFW_KEY_HOME) {
+      load_frame(0);
+      return true;
+    }
+    if (key == GLFW_KEY_END) {
+      load_frame(static_cast<int>(m_frames.size()) - 1);
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -210,6 +384,9 @@ bool MeshViewer::mouse_button_event(const Vector2i &p, int button, bool down,
 
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
     m_left_mouse_down = down;
+    if (down) {
+      m_camera_target = Vector3f(0.0f, 0.0f, 0.0f);
+    }
     return true;
   }
   if (button == GLFW_MOUSE_BUTTON_RIGHT) {
@@ -260,6 +437,19 @@ void MeshViewer::draw_contents() {
     redraw();
   }
 
+  if (m_playing && !m_frames.empty() && m_fps > 0.0f) {
+    const double interval = 1.0 / static_cast<double>(m_fps);
+    if (m_last_advance_time < 0.0) m_last_advance_time = now;
+    if (now - m_last_advance_time >= interval) {
+      m_last_advance_time = now;
+      int next = m_frame_idx + 1;
+      if (next >= static_cast<int>(m_frames.size())) next = 0;
+      load_frame(next);
+    } else {
+      redraw();
+    }
+  }
+
   float fov = m_fov * (M_PI / 180.0f);
   float aspect = (float)m_size.x() / (float)m_size.y();
   Matrix4f proj = Matrix4f::perspective(fov, 0.1f, 100.0f, aspect);
@@ -273,7 +463,8 @@ void MeshViewer::draw_contents() {
   // Passed into shaders
   m_shader->set_uniform("lightPos", m_light_pos);
   m_shader->set_uniform("viewPos", m_camera_eye);
-  m_shader->set_uniform("objectColor", m_object_color);
+  Vector3f obj_rgb(m_object_color.r(), m_object_color.g(), m_object_color.b());
+  m_shader->set_uniform("objectColor", obj_rgb);
 
   m_render_pass->resize(framebuffer_size());
   m_render_pass->begin();

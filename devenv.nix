@@ -1,62 +1,55 @@
-{
-  pkgs,
-  lib,
-  config,
-  inputs,
-  ...
-}:
+{ pkgs, ... }:
 
-{
-  env.GREET = "devenv";
+let
+  # Runtime shared libraries the viewer dlopens at startup. These have to be on
+  # LD_LIBRARY_PATH because NixOS doesn't expose system libraries via standard
+  # paths.
+  runtimeLibs = with pkgs; [
+    libGL
+    libxkbcommon
+    wayland
+    xorg.libX11
+    xorg.libXcursor
+    xorg.libXext
+    xorg.libXi
+    xorg.libXinerama
+    xorg.libXrandr
+  ];
+in {
+  languages.cplusplus.enable = true;
+
   packages = with pkgs; [
-    git
+    # Build tools
     cmake
-    clang-tools
-    pkg-config
     ninja
+    pkg-config
     gcc
+    clang-tools
+
+    # C++ libraries the project links against
     eigen
     openmesh
+    (suitesparse.override { enableCuda = false; })
+
+    # Viewer-side platform deps (windowing, GL dispatch, IPC)
     dbus
-    wayland-scanner
-    wayland
-    wayland-protocols
-    libxkbcommon
-
-    (suitesparse.override {
-      enableCuda = false;
-    })
-
-    # OpenGL & X11
     libGL
     libGLU
+    libxkbcommon
+    wayland
+    wayland-protocols
+    wayland-scanner
     xorg.libX11
-    xorg.libXrandr
-    xorg.libXinerama
     xorg.libXcursor
     xorg.libXi
+    xorg.libXinerama
+    xorg.libXrandr
     xorg.libXxf86vm
   ];
 
-  languages.cplusplus.enable = true;
-
-  env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
-    with pkgs;
-    [
-      libGL
-      xorg.libX11
-      xorg.libXext
-      xorg.libXinerama
-      xorg.libXcursor
-      xorg.libXrandr
-      xorg.libXi
-      wayland
-      libxkbcommon
-    ]
-  );
+  env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
 
   enterShell = ''
     cmake --version
-    git --version
   '';
 }
