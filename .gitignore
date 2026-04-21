@@ -30,5 +30,11 @@ CLAUDE.md
 .claude/
 PHASE_NOTES.md
 
+# VSCode "Local History" extension snapshots
+.history/
+
+# Stray xelatex compile log if someone runs xelatex from repo root
+texput.log
+
 # Local-only: mirrors milestone.html -> coherentmonkey.github.io/184/project/
 sync_milestone.sh
