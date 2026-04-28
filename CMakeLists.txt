@@ -36,6 +36,7 @@ set(RSH_CORE_SOURCES
     src/core/TPE.cpp
     src/core/BVH.cpp
     src/core/BCT.cpp
+    src/core/HsPreconditioner.cpp
 )
 
 add_library(rsh_core STATIC ${RSH_CORE_SOURCES})
@@ -76,3 +77,6 @@ target_link_libraries(dump_test_meshes PRIVATE rsh_core)
 
 add_executable(demo_phase1_flow tests/demo_phase1_flow.cpp)
 target_link_libraries(demo_phase1_flow PRIVATE rsh_core)
+
+add_executable(demo_phase2_hs_flow tests/demo_phase2_hs_flow.cpp)
+target_link_libraries(demo_phase2_hs_flow PRIVATE rsh_core)
