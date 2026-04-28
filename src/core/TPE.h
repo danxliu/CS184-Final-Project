@@ -5,8 +5,30 @@
 #include "BVH.h"
 #include "FaceGeom.h"
 #include "MeshData.h"
+#include <vector>
 
 namespace rsh {
+
+struct TpeAdaptiveParams {
+    bool enabled = false;
+    double theta = 10.0;
+    int max_depth = 8;
+    int max_stack_items = 262144;
+};
+
+struct TpeNearFieldTerm {
+    int t1 = -1;
+    int t2 = -1;
+    Eigen::Vector3d w1 = Eigen::Vector3d::Constant(1.0 / 3.0);
+    Eigen::Vector3d w2 = Eigen::Vector3d::Constant(1.0 / 3.0);
+    double area_scale_1 = 1.0;
+    double area_scale_2 = 1.0;
+};
+
+struct TpeAdaptiveCache {
+    TpeAdaptiveParams params;
+    std::vector<TpeNearFieldTerm> near_terms;
+};
 
 // Discrete tangent-point energy via midpoint quadrature (RSu Eq. 10, RS Eq. 14):
 //
@@ -46,10 +68,29 @@ Eigen::MatrixXd tpe_gradient_brute(const MeshData &mesh,
 double tpe_energy_bh(const FaceGeom &g, const BVH &bvh, const BlockPairs &bp,
                      double alpha = 6.0);
 
+TpeAdaptiveCache build_tpe_adaptive_cache(const MeshData &mesh,
+                                          const FaceGeom &g,
+                                          const BVH &bvh,
+                                          const BlockPairs &bp,
+                                          const TpeAdaptiveParams &adaptive);
+
+double tpe_energy_bh(const MeshData &mesh,
+                     const FaceGeom &g,
+                     const BVH &bvh,
+                     const BlockPairs &bp,
+                     const TpeAdaptiveParams &adaptive,
+                     double alpha = 6.0,
+                     const TpeAdaptiveCache *cache = nullptr);
+
 // Convenience wrapper: build FaceGeom + BVH + BCT internally. Intended for
 // one-shot use; for repeated evaluations on the same topology, build the
 // BVH/BCT once and call the three-argument overload above.
 double tpe_energy_bh(const MeshData &mesh, double alpha = 6.0,
+                     double theta = 0.5);
+
+double tpe_energy_bh(const MeshData &mesh,
+                     const TpeAdaptiveParams &adaptive,
+                     double alpha = 6.0,
                      double theta = 0.5);
 
 // Barnes-Hut tangent-point gradient. Returns an (n_v x 3) matrix where row i
@@ -80,7 +121,20 @@ Eigen::MatrixXd tpe_gradient_bh(const MeshData &mesh,
                                 const BlockPairs &bp,
                                 double alpha = 6.0);
 
+Eigen::MatrixXd tpe_gradient_bh(const MeshData &mesh,
+                                const FaceGeom &g,
+                                const BVH &bvh,
+                                const BlockPairs &bp,
+                                const TpeAdaptiveParams &adaptive,
+                                double alpha = 6.0,
+                                const TpeAdaptiveCache *cache = nullptr);
+
 Eigen::MatrixXd tpe_gradient_bh(const MeshData &mesh, double alpha = 6.0,
+                                double theta = 0.5);
+
+Eigen::MatrixXd tpe_gradient_bh(const MeshData &mesh,
+                                const TpeAdaptiveParams &adaptive,
+                                double alpha = 6.0,
                                 double theta = 0.5);
 
 } // namespace rsh

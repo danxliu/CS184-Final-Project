@@ -918,6 +918,162 @@ void test_tpe_bh_scale_covariance() {
           "BH scale covariance holds to float precision");
 }
 
+void test_tpe_adaptive_disabled_matches_bh() {
+    std::cout << "-- adaptive disabled matches midpoint BH exactly --\n";
+    MeshData m = make_torus(1.0, 0.3, 12, 8);
+    m.normalize();
+    const FaceGeom g = compute_face_geom(m);
+    const BVH bvh = build_bvh(m, g);
+    const BlockPairs bp = build_bct_self(bvh, 0.5);
+    const double alpha = 6.0;
+
+    const TpeAdaptiveParams off{};
+    const double e_ref = tpe_energy_bh(g, bvh, bp, alpha);
+    const double e_off = tpe_energy_bh(m, g, bvh, bp, off, alpha);
+    const Eigen::MatrixXd g_ref = tpe_gradient_bh(m, g, bvh, bp, alpha);
+    const Eigen::MatrixXd g_off = tpe_gradient_bh(m, g, bvh, bp, off, alpha);
+
+    const double e_err = std::abs(e_off - e_ref);
+    const double g_err = (g_off - g_ref).cwiseAbs().maxCoeff();
+    check(e_err < 1e-14, "adaptive-off energy equals BH midpoint");
+    check(g_err < 1e-12, "adaptive-off gradient equals BH midpoint");
+}
+
+void test_tpe_adaptive_depth0_matches_midpoint() {
+    std::cout << "-- adaptive max_depth=0 reproduces midpoint near-field --\n";
+    MeshData m = make_icosphere(2);
+    m.normalize();
+    const FaceGeom g = compute_face_geom(m);
+    const BVH bvh = build_bvh(m, g);
+    const BlockPairs bp = build_bct_self(bvh, 0.5);
+    const double alpha = 6.0;
+
+    TpeAdaptiveParams ad;
+    ad.enabled = true;
+    ad.theta = 10.0;
+    ad.max_depth = 0;
+
+    const TpeAdaptiveCache cache = build_tpe_adaptive_cache(m, g, bvh, bp, ad);
+    const double e_ref = tpe_energy_bh(g, bvh, bp, alpha);
+    const double e_ad = tpe_energy_bh(m, g, bvh, bp, ad, alpha, &cache);
+    const Eigen::MatrixXd g_ref = tpe_gradient_bh(m, g, bvh, bp, alpha);
+    const Eigen::MatrixXd g_ad = tpe_gradient_bh(m, g, bvh, bp, ad, alpha, &cache);
+
+    const double e_err = std::abs(e_ad - e_ref);
+    const double g_err = (g_ad - g_ref).cwiseAbs().maxCoeff();
+    std::cout << "    |E_ad - E_mid| = " << e_err << "\n";
+    check(e_err < 1e-10, "adaptive depth0 energy equals midpoint");
+    check(g_err < 1e-11, "adaptive depth0 gradient equals midpoint");
+}
+
+void test_tpe_adaptive_gradient_fd_check() {
+    std::cout << "-- FD check for adaptive BH gradient (frozen adaptive cache) --\n";
+    MeshData m = make_icosphere(2);
+    m.normalize();
+    const double alpha = 6.0;
+    const FaceGeom g0 = compute_face_geom(m);
+    BVH bvh = build_bvh(m, g0);
+    const BlockPairs bp = build_bct_self(bvh, 0.5);
+    TpeAdaptiveParams ad;
+    ad.enabled = true;
+    ad.theta = 10.0;
+    ad.max_depth = 2;
+    ad.max_stack_items = 400000;
+    const TpeAdaptiveCache cache = build_tpe_adaptive_cache(m, g0, bvh, bp, ad);
+    const int nv = m.n_vertices();
+
+    auto energy = [&](const Eigen::VectorXd &x) -> double {
+        MeshData mm = m;
+        mm.V = unflatten(x, nv);
+        const FaceGeom g = compute_face_geom(mm);
+        update_bvh_aggregates(bvh, g);
+        return tpe_energy_bh(mm, g, bvh, bp, ad, alpha, &cache);
+    };
+    auto grad = [&](const Eigen::VectorXd &x) -> Eigen::VectorXd {
+        MeshData mm = m;
+        mm.V = unflatten(x, nv);
+        const FaceGeom g = compute_face_geom(mm);
+        update_bvh_aggregates(bvh, g);
+        return flatten(tpe_gradient_bh(mm, g, bvh, bp, ad, alpha, &cache));
+    };
+
+    const Eigen::VectorXd x0 = flatten(m.V);
+    const GradCheckResult r = finite_diff_gradient_check(energy, grad, x0);
+    update_bvh_aggregates(bvh, g0);
+
+    std::cout << "    adaptive terms   = " << cache.near_terms.size() << "\n"
+              << "    max abs err      = " << r.max_abs_err << "\n"
+              << "    max rel err      = " << r.max_rel_err << "\n";
+    check(r.pass(5e-3), "adaptive BH gradient FD-check passes at rel-err < 5e-3");
+}
+
+void test_tpe_adaptive_near_contact_growth() {
+    std::cout << "-- adaptive strengthens near-contact response for offset centroids --\n";
+    const double alpha = 6.0;
+    std::vector<double> deltas = {0.2, 0.1, 0.05, 0.025};
+    std::vector<double> e_mid;
+    std::vector<double> e_ad;
+    e_mid.reserve(deltas.size());
+    e_ad.reserve(deltas.size());
+
+    for (double d : deltas) {
+        // Point-like near contact: only one vertex of triangle 2 approaches
+        // triangle 1 as delta shrinks; centroids stay relatively far apart.
+        MeshData m;
+        m.V.resize(6, 3);
+        m.V << 0.0, 0.0, 0.0,
+               1.0, 0.0, 0.0,
+               0.0, 1.0, 0.0,
+               0.05, 0.05, d,
+               1.80, 0.05, 1.0,
+               0.05, 1.80, 1.0;
+        m.F.resize(2, 3);
+        m.F << 0, 1, 2,
+               3, 4, 5;
+
+        const FaceGeom g = compute_face_geom(m);
+        const BVH bvh = build_bvh(m, g);
+        const BlockPairs bp = build_bct_self(bvh, 0.5);
+
+        TpeAdaptiveParams ad;
+        ad.enabled = true;
+        ad.theta = 0.5;
+        ad.max_depth = 7;
+        ad.max_stack_items = 500000;
+        const TpeAdaptiveCache cache = build_tpe_adaptive_cache(m, g, bvh, bp, ad);
+
+        e_mid.push_back(tpe_energy_bh(g, bvh, bp, alpha));
+        e_ad.push_back(tpe_energy_bh(m, g, bvh, bp, ad, alpha, &cache));
+    }
+
+    bool midpoint_nonincreasing = true;
+    bool adaptive_nonincreasing = true;
+    bool adaptive_monotone_ratio = true;
+    for (size_t i = 1; i < deltas.size(); ++i) {
+        if (!(e_mid[i] >= e_mid[i - 1])) midpoint_nonincreasing = false;
+        if (!(e_ad[i] >= e_ad[i - 1])) adaptive_nonincreasing = false;
+        const double ratio_i = e_ad[i] / e_mid[i];
+        const double ratio_prev = e_ad[i - 1] / e_mid[i - 1];
+        if (!(ratio_i >= ratio_prev)) adaptive_monotone_ratio = false;
+    }
+    const double growth_mid = e_mid.back() / e_mid.front();
+    const double growth_ad = e_ad.back() / e_ad.front();
+    std::cout << "    deltas: ";
+    for (double d : deltas) std::cout << d << " ";
+    std::cout << "\n    midpoint E: ";
+    for (double e : e_mid) std::cout << e << " ";
+    std::cout << "\n    adaptive E: ";
+    for (double e : e_ad) std::cout << e << " ";
+    std::cout << "\n    growth midpoint: " << growth_mid
+              << "\n    growth adaptive: " << growth_ad << "\n";
+    check(midpoint_nonincreasing, "midpoint energy increases as gap shrinks");
+    check(adaptive_nonincreasing, "adaptive energy increases as gap shrinks");
+    check(adaptive_monotone_ratio,
+          "adaptive/midpoint ratio increases as near-contact tightens");
+    check(growth_ad > growth_mid,
+          "adaptive shows stronger near-contact growth than midpoint");
+}
+
 } // namespace
 
 int main() {
@@ -947,6 +1103,10 @@ int main() {
     test_tpe_gradient_bh_fd_check();
     test_tpe_gradient_bh_translation_equivariance();
     test_tpe_gradient_bh_descent_step();
+    test_tpe_adaptive_disabled_matches_bh();
+    test_tpe_adaptive_depth0_matches_midpoint();
+    test_tpe_adaptive_gradient_fd_check();
+    test_tpe_adaptive_near_contact_growth();
 
     std::cout << "\n"
               << (failures == 0 ? "ALL PASSED"
