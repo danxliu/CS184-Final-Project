@@ -3,8 +3,11 @@
 #include "FaceGeom.h"
 #include "GradCheck.h"
 #include "MeshData.h"
+#include "PathEnergy.h"
+#include "ShellEnergy.h"
 #include "TestMeshes.h"
 #include "TPE.h"
+#include "TrustRegionSolver.h"
 
 #include <Eigen/Dense>
 #include <cmath>
@@ -1074,6 +1077,199 @@ void test_tpe_adaptive_near_contact_growth() {
           "adaptive shows stronger near-contact growth than midpoint");
 }
 
+void test_shell_energy_zero_at_identity() {
+    std::cout << "-- shell energy is ~0 at identity deformation --\n";
+    MeshData x = make_icosphere(2);
+    x.normalize();
+    ShellEnergyParams p;
+    p.thickness = 1.0;
+    p.lambda = 1.0;
+    p.mu = 1.0;
+    const ShellEnergyValue e = shell_energy(x, x, p);
+    std::cout << "    membrane = " << e.membrane
+              << ", bending = " << e.bending
+              << ", total = " << e.total << "\n";
+    check(std::abs(e.total) < 1e-9, "Wc(x,x) ~= 0");
+}
+
+void test_shell_energy_positive_under_deformation() {
+    std::cout << "-- shell energy increases under anisotropic deformation --\n";
+    MeshData x = make_icosphere(2);
+    x.normalize();
+    MeshData y = x;
+    y.V.col(0) *= 1.15;
+    y.V.col(1) *= 0.9;
+
+    const ShellEnergyValue e = shell_energy(x, y);
+    std::cout << "    membrane = " << e.membrane
+              << ", bending = " << e.bending
+              << ", total = " << e.total << "\n";
+    check(e.total > 0.0, "Wc(x,y) > 0 for nontrivial deformation");
+}
+
+void test_shell_energy_gradient_fd_deformed_mesh() {
+    std::cout << "-- FD check for shell energy gradients (ref/deformed vars) --\n";
+    MeshData x0 = make_torus(1.0, 0.3, 10, 8);
+    x0.normalize();
+    MeshData y0 = x0;
+    y0.V.col(0) *= 1.1;
+    y0.V.col(2) *= 0.95;
+    const int nv = x0.n_vertices();
+    const int ndof = 6 * nv;
+    const ShellEnergyParams params{};
+
+    auto pack = [&](const MeshData &xr, const MeshData &xd) {
+        Eigen::VectorXd out(ndof);
+        for (int i = 0; i < nv; ++i) {
+            out.segment<3>(3 * i) = xr.V.row(i).transpose();
+            out.segment<3>(3 * nv + 3 * i) = xd.V.row(i).transpose();
+        }
+        return out;
+    };
+    auto unpack = [&](const Eigen::VectorXd &z, MeshData &xr, MeshData &xd) {
+        xr = x0;
+        xd = y0;
+        for (int i = 0; i < nv; ++i) {
+            xr.V.row(i) = z.segment<3>(3 * i).transpose();
+            xd.V.row(i) = z.segment<3>(3 * nv + 3 * i).transpose();
+        }
+    };
+
+    auto energy = [&](const Eigen::VectorXd &z) -> double {
+        MeshData xr, xd;
+        unpack(z, xr, xd);
+        return shell_energy(xr, xd, params).total;
+    };
+    auto grad = [&](const Eigen::VectorXd &z) -> Eigen::VectorXd {
+        MeshData xr, xd;
+        unpack(z, xr, xd);
+        const ShellEnergyGradientResult r = shell_energy_with_gradient(xr, xd, params);
+        Eigen::VectorXd g(ndof);
+        for (int i = 0; i < nv; ++i) {
+            g.segment<3>(3 * i) = r.grad_ref.row(i).transpose();
+            g.segment<3>(3 * nv + 3 * i) = r.grad_def.row(i).transpose();
+        }
+        return g;
+    };
+
+    const Eigen::VectorXd z0 = pack(x0, y0);
+    const GradCheckResult r = finite_diff_gradient_check(energy, grad, z0, 1e-6);
+    std::cout << "    max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index << "\n";
+    check(r.pass(5e-3), "shell energy gradient FD-check passes (rel < 5e-3)");
+}
+
+void test_path_energy_identity_zero() {
+    std::cout << "-- path energy is ~0 for constant trajectory --\n";
+    MeshData x = make_icosphere(2);
+    x.normalize();
+    std::vector<MeshData> frames = {x, x, x, x};
+    PathEnergyParams p;
+    p.tpe_adaptive.enabled = true;
+    p.tpe_adaptive.max_depth = 2;
+    const PathEnergyResult r = path_energy(frames, p);
+    std::cout << "    total = " << r.terms.total
+              << ", shell = " << r.terms.shell_sum
+              << ", rep = " << r.terms.repulsive_sum << "\n";
+    check(std::abs(r.terms.total) < 1e-9, "E_hat(constant path) ~= 0");
+}
+
+void test_path_energy_gradient_fd() {
+    std::cout << "-- FD check for path energy gradient on interior frames --\n";
+    MeshData x0 = make_icosphere(1);
+    x0.normalize();
+    std::vector<MeshData> frames(4, x0);
+    frames[1].V.col(0) *= 1.05;
+    frames[2].V.col(1) *= 0.92;
+
+    PathEnergyParams p;
+    p.tpe_adaptive.enabled = true;
+    p.tpe_adaptive.max_depth = 2;
+    p.tpe_alpha = 6.0;
+    p.tpe_theta = 0.5;
+    const std::vector<PathEnergyFrameCache> frozen_cache =
+        build_path_energy_frame_cache(frames, p);
+
+    const int nv = x0.n_vertices();
+    const int ndof = 2 * 3 * nv; // optimize x1, x2 only
+
+    auto pack = [&](const std::vector<MeshData> &f) {
+        Eigen::VectorXd z(ndof);
+        for (int i = 0; i < nv; ++i) {
+            z.segment<3>(3 * i) = f[1].V.row(i).transpose();
+            z.segment<3>(3 * nv + 3 * i) = f[2].V.row(i).transpose();
+        }
+        return z;
+    };
+    auto unpack = [&](const Eigen::VectorXd &z, std::vector<MeshData> &f) {
+        f = frames;
+        for (int i = 0; i < nv; ++i) {
+            f[1].V.row(i) = z.segment<3>(3 * i).transpose();
+            f[2].V.row(i) = z.segment<3>(3 * nv + 3 * i).transpose();
+        }
+    };
+
+    auto energy = [&](const Eigen::VectorXd &z) -> double {
+        std::vector<MeshData> f;
+        unpack(z, f);
+        return path_energy(f, p, &frozen_cache).terms.total;
+    };
+    auto grad = [&](const Eigen::VectorXd &z) -> Eigen::VectorXd {
+        std::vector<MeshData> f;
+        unpack(z, f);
+        const PathEnergyGradientResult g = path_energy_with_gradient(f, p, &frozen_cache);
+        Eigen::VectorXd out(ndof);
+        for (int i = 0; i < nv; ++i) {
+            out.segment<3>(3 * i) = g.grad_frames[1].row(i).transpose();
+            out.segment<3>(3 * nv + 3 * i) = g.grad_frames[2].row(i).transpose();
+        }
+        return out;
+    };
+
+    const Eigen::VectorXd z0 = pack(frames);
+    const GradCheckResult r = finite_diff_gradient_check(energy, grad, z0, 1e-6);
+    std::cout << "    max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index << "\n";
+    check(r.pass(5e-3), "path energy gradient FD-check passes (rel < 5e-3)");
+}
+
+void test_trust_region_interpolation_decreases_path_energy() {
+    std::cout << "-- trust-region interpolation decreases path energy --\n";
+    MeshData x0 = make_icosphere(1);
+    x0.normalize();
+    MeshData x3 = x0;
+    x3.V.col(0) *= 1.15;
+    x3.V.col(1) *= 0.9;
+
+    std::vector<MeshData> frames(4, x0);
+    frames[3] = x3;
+    // piecewise-constant initialization of interior frames
+    frames[1] = x0;
+    frames[2] = x3;
+
+    PathEnergyParams ep;
+    ep.tpe_adaptive.enabled = true;
+    ep.tpe_adaptive.max_depth = 2;
+
+    TrustRegionParams tp;
+    tp.max_iters = 8;
+    tp.max_cg_iters = 25;
+    tp.initial_radius = 1e-2;
+    tp.max_radius = 5e-2;
+
+    const double e0 = path_energy(frames, ep).terms.total;
+    const TrustRegionResult res =
+        interpolate_geodesic_trust_region(frames, ep, tp);
+    const double e1 = path_energy(res.frames, ep).terms.total;
+    std::cout << "    E0 = " << e0
+              << ", E1 = " << e1
+              << ", accepted = " << res.accepted_steps
+              << ", iters = " << res.outer_iterations << "\n";
+    check(e1 <= e0 + 1e-10, "trust-region does not increase objective");
+}
+
 } // namespace
 
 int main() {
@@ -1107,6 +1303,12 @@ int main() {
     test_tpe_adaptive_depth0_matches_midpoint();
     test_tpe_adaptive_gradient_fd_check();
     test_tpe_adaptive_near_contact_growth();
+    test_shell_energy_zero_at_identity();
+    test_shell_energy_positive_under_deformation();
+    test_shell_energy_gradient_fd_deformed_mesh();
+    test_path_energy_identity_zero();
+    test_path_energy_gradient_fd();
+    test_trust_region_interpolation_decreases_path_energy();
 
     std::cout << "\n"
               << (failures == 0 ? "ALL PASSED"

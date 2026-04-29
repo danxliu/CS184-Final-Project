@@ -33,6 +33,10 @@ set(RSH_CORE_SOURCES
     src/core/GradCheck.cpp
     src/core/TestMeshes.cpp
     src/core/FaceGeom.cpp
+    src/core/ShellEnergy.cpp
+    src/core/PathEnergy.cpp
+    src/core/TrustRegionSolver.cpp
+    src/core/ExtrapolationSolver.cpp
     src/core/TPE.cpp
     src/core/BVH.cpp
     src/core/BCT.cpp
@@ -72,6 +76,9 @@ target_link_libraries(test_phase0 PRIVATE rsh_core)
 add_executable(test_phase1 tests/test_phase1.cpp)
 target_link_libraries(test_phase1 PRIVATE rsh_core)
 
+add_executable(test_phase2 tests/test_phase2.cpp)
+target_link_libraries(test_phase2 PRIVATE rsh_core)
+
 add_executable(dump_test_meshes tests/dump_test_meshes.cpp)
 target_link_libraries(dump_test_meshes PRIVATE rsh_core)
 
@@ -80,3 +87,9 @@ target_link_libraries(demo_phase1_flow PRIVATE rsh_core)
 
 add_executable(demo_phase2_hs_flow tests/demo_phase2_hs_flow.cpp)
 target_link_libraries(demo_phase2_hs_flow PRIVATE rsh_core)
+
+add_executable(demo_interpolation tests/demo_interpolation.cpp)
+target_link_libraries(demo_interpolation PRIVATE rsh_core)
+
+add_executable(demo_extrapolation tests/demo_extrapolation.cpp)
+target_link_libraries(demo_extrapolation PRIVATE rsh_core)
