@@ -17,6 +17,7 @@ struct TrustRegionParams {
     double accept_eta = 0.1;
     double hvp_eps = 1e-5;
     std::vector<bool> free_vertices;
+    bool optimize_end_frame = false;
 };
 
 struct TrustRegionResult {
