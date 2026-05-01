@@ -16,6 +16,7 @@ struct TrustRegionParams {
     double max_radius = 1.0;
     double accept_eta = 0.1;
     double hvp_eps = 1e-5;
+    std::vector<bool> free_vertices;
 };
 
 struct TrustRegionResult {

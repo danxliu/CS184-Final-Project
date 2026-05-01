@@ -91,5 +91,8 @@ target_link_libraries(demo_phase2_hs_flow PRIVATE rsh_core)
 add_executable(demo_interpolation tests/demo_interpolation.cpp)
 target_link_libraries(demo_interpolation PRIVATE rsh_core)
 
+add_executable(demo_compression tests/demo_compression.cpp)
+target_link_libraries(demo_compression PRIVATE rsh_core)
+
 add_executable(demo_extrapolation tests/demo_extrapolation.cpp)
 target_link_libraries(demo_extrapolation PRIVATE rsh_core)

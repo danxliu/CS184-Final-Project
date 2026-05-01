@@ -4,6 +4,8 @@
 #include "BVH.h"
 #include "FaceGeom.h"
 
+#include <chrono>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -45,6 +47,9 @@ std::vector<FrameEval> build_frame_eval(
     const std::vector<PathEnergyFrameCache> *frame_cache) {
     std::vector<FrameEval> out(frames.size());
     for (size_t k = 0; k < frames.size(); ++k) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+        std::cout << "[PathEnergy] Evaluating " << (with_gradient ? "energy+grad" : "energy") 
+                  << " for frame " << k+1 << " of " << frames.size() << "..." << std::flush;
         FrameEval &fe = out[k];
         fe.g = compute_face_geom(frames[k]);
         if (frame_cache != nullptr) {
@@ -91,6 +96,9 @@ std::vector<FrameEval> build_frame_eval(
                 }
             }
         }
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end_time - start_time;
+        std::cout << " done in " << diff.count() << " seconds\n";
     }
     return out;
 }
@@ -103,6 +111,8 @@ std::vector<PathEnergyFrameCache> build_path_energy_frame_cache(
     validate_frames(frames);
     std::vector<PathEnergyFrameCache> out(frames.size());
     for (size_t k = 0; k < frames.size(); ++k) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+        std::cout << "[PathEnergy] Building cache for frame " << k+1 << " of " << frames.size() << "..." << std::flush;
         const FaceGeom g = compute_face_geom(frames[k]);
         out[k].bvh = build_bvh(frames[k], g);
         out[k].bp = build_bct_self(out[k].bvh, params.tpe_theta);
@@ -111,6 +121,9 @@ std::vector<PathEnergyFrameCache> build_path_energy_frame_cache(
                 frames[k], g, out[k].bvh, out[k].bp, params.tpe_adaptive);
             out[k].has_adaptive = true;
         }
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end_time - start_time;
+        std::cout << " done in " << diff.count() << " seconds\n";
     }
     return out;
 }
