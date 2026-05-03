@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(EIGEN3 REQUIRED eigen3)
 find_package(OpenMesh REQUIRED)
+find_package(Threads REQUIRED)
 
 # NanoGUI viewer is optional. Auto-enabled if the submodule has been
 # initialized; force-disable with -DRSH_ENABLE_VIEWER=OFF for headless builds
@@ -96,3 +97,94 @@ target_link_libraries(demo_compression PRIVATE rsh_core)
 
 # add_executable(demo_extrapolation tests/demo_extrapolation.cpp)
 # target_link_libraries(demo_extrapolation PRIVATE rsh_core)
+
+# -- opt-in external validation ----------------------------------------------
+# Repulsor is a sibling checkout used only for cross-validation; keep it out of
+# the normal build so teammates without ../Repulsor are not blocked.
+option(RSH_HAVE_REPULSOR "Build Repulsor cross-validation tool" OFF)
+if(RSH_HAVE_REPULSOR)
+    include(CheckCXXSourceCompiles)
+
+    get_filename_component(RSH_REPULSOR_DIR
+        "${CMAKE_SOURCE_DIR}/../Repulsor" ABSOLUTE)
+    if(NOT EXISTS "${RSH_REPULSOR_DIR}/Repulsor.hpp")
+        message(FATAL_ERROR
+            "RSH_HAVE_REPULSOR=ON but ${RSH_REPULSOR_DIR}/Repulsor.hpp "
+            "does not exist")
+    endif()
+    if(NOT EXISTS "${RSH_REPULSOR_DIR}/submodules/Tensors/OpenBLAS.hpp")
+        message(FATAL_ERROR
+            "RSH_HAVE_REPULSOR=ON but Repulsor submodules are missing. "
+            "Run `git submodule update --init --recursive` in ../Repulsor.")
+    endif()
+
+    find_path(RSH_REPULSOR_CBLAS_INCLUDE_DIR cblas.h
+        PATHS /usr/include /usr/include/x86_64-linux-gnu
+        PATH_SUFFIXES x86_64-linux-gnu)
+    find_path(RSH_REPULSOR_LAPACKE_INCLUDE_DIR lapacke.h
+        PATHS
+            ${EIGEN3_INCLUDE_DIRS}/Eigen/src/misc
+            ${EIGEN3_INCLUDE_DIRS}
+        PATH_SUFFIXES Eigen/src/misc)
+    find_library(RSH_REPULSOR_OPENBLAS_LIBRARY NAMES openblas
+        PATHS /usr/lib /usr/lib/x86_64-linux-gnu /lib /lib/x86_64-linux-gnu)
+    if(NOT RSH_REPULSOR_OPENBLAS_LIBRARY)
+        file(GLOB RSH_REPULSOR_OPENBLAS_CANDIDATES
+            "/nix/store/*openblas*/lib/libopenblas.so")
+        if(RSH_REPULSOR_OPENBLAS_CANDIDATES)
+            list(SORT RSH_REPULSOR_OPENBLAS_CANDIDATES)
+            list(GET RSH_REPULSOR_OPENBLAS_CANDIDATES 0
+                RSH_REPULSOR_OPENBLAS_LIBRARY)
+        endif()
+    endif()
+    find_library(RSH_REPULSOR_BLAS_LIBRARY NAMES blas
+        PATHS /usr/lib /usr/lib/x86_64-linux-gnu /lib /lib/x86_64-linux-gnu)
+    find_library(RSH_REPULSOR_LAPACK_LIBRARY NAMES lapack
+        PATHS /usr/lib /usr/lib/x86_64-linux-gnu /lib /lib/x86_64-linux-gnu)
+
+    if(NOT RSH_REPULSOR_CBLAS_INCLUDE_DIR)
+        message(FATAL_ERROR "RSH_HAVE_REPULSOR=ON but cblas.h was not found")
+    endif()
+    if(NOT RSH_REPULSOR_LAPACKE_INCLUDE_DIR)
+        message(FATAL_ERROR "RSH_HAVE_REPULSOR=ON but lapacke.h was not found")
+    endif()
+    if(RSH_REPULSOR_OPENBLAS_LIBRARY)
+        set(RSH_REPULSOR_BLAS_LIBRARIES ${RSH_REPULSOR_OPENBLAS_LIBRARY})
+    elseif(RSH_REPULSOR_BLAS_LIBRARY AND RSH_REPULSOR_LAPACK_LIBRARY)
+        set(RSH_REPULSOR_BLAS_LIBRARIES
+            ${RSH_REPULSOR_BLAS_LIBRARY}
+            ${RSH_REPULSOR_LAPACK_LIBRARY})
+    else()
+        message(FATAL_ERROR
+            "RSH_HAVE_REPULSOR=ON but neither OpenBLAS nor BLAS+LAPACK "
+            "libraries were found")
+    endif()
+
+    check_cxx_source_compiles(
+        "#include \"${RSH_REPULSOR_CBLAS_INCLUDE_DIR}/cblas.h\"
+         int main() { blasint x = 0; return static_cast<int>(x); }"
+        RSH_REPULSOR_CBLAS_HAS_BLASINT)
+
+    add_executable(cross_validate_repulsor
+        tools/cross_validate_repulsor.cpp)
+    set_property(TARGET cross_validate_repulsor PROPERTY CXX_STANDARD 20)
+    target_include_directories(cross_validate_repulsor PRIVATE
+        ${RSH_REPULSOR_DIR})
+    target_compile_definitions(cross_validate_repulsor PRIVATE
+        RSH_REPULSOR_CBLAS_HEADER="${RSH_REPULSOR_CBLAS_INCLUDE_DIR}/cblas.h"
+        RSH_REPULSOR_LAPACKE_HEADER="${RSH_REPULSOR_LAPACKE_INCLUDE_DIR}/lapacke.h")
+    target_link_libraries(cross_validate_repulsor PRIVATE
+        rsh_core
+        ${RSH_REPULSOR_BLAS_LIBRARIES}
+        Threads::Threads)
+    if(NOT RSH_REPULSOR_CBLAS_HAS_BLASINT)
+        target_compile_definitions(cross_validate_repulsor PRIVATE
+            RSH_REPULSOR_NEEDS_BLASINT_ALIAS=1)
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        target_compile_options(cross_validate_repulsor PRIVATE -fpermissive)
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(cross_validate_repulsor PRIVATE -fenable-matrix)
+    endif()
+endif()

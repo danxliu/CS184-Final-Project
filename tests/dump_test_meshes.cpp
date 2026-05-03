@@ -17,5 +17,11 @@ int main() {
         m.save_obj("assets/torus.obj");
         std::cout << "wrote assets/torus.obj  (V=" << m.n_vertices() << ", F=" << m.n_faces() << ")\n";
     }
+    {
+        MeshData m = make_torus(1.0, 0.4, 12, 8);
+        m.save_obj("assets/torus_12x8.obj");
+        std::cout << "wrote assets/torus_12x8.obj  (V=" << m.n_vertices()
+                  << ", F=" << m.n_faces() << ")\n";
+    }
     return 0;
 }

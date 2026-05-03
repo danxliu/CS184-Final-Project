@@ -22,6 +22,7 @@ out/
 # Procedurally generated assets (rebuilt by `./build/dump_test_meshes`)
 assets/icosphere_*.obj
 assets/torus.obj
+assets/torus_12x8.obj
 # External meshes not used by any current code path
 assets/spot.obj
 
