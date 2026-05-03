@@ -99,17 +99,18 @@ int main(int argc, char **argv) {
 
     // Identify handle vertices
     double epsilon = 0.1;
-    std::vector<bool> is_handle(m_ref.n_vertices(), false);
+    std::vector<bool> is_left_handle(m_ref.n_vertices(), false);
+    std::vector<bool> is_right_handle(m_ref.n_vertices(), false);
     int num_left_handles = 0;
     int num_right_handles = 0;
 
     for (int i = 0; i < m_ref.n_vertices(); ++i) {
         double x = m_ref.V(i, 0);
         if (x <= left_min_x + epsilon) {
-            is_handle[i] = true;
+            is_left_handle[i] = true;
             num_left_handles++;
         } else if (x >= right_max_x - epsilon) {
-            is_handle[i] = true;
+            is_right_handle[i] = true;
             num_right_handles++;
         }
     }
@@ -153,12 +154,10 @@ int main(int argc, char **argv) {
         
         // 1. Move handles
         for (int i = 0; i < m_curr.n_vertices(); ++i) {
-            if (is_handle[i]) {
-                if (m_curr.V(i, 0) < 0) {
-                    m_curr.V(i, 0) += dx_per_frame; // Move left handle right
-                } else {
-                    m_curr.V(i, 0) -= dx_per_frame; // Move right handle left
-                }
+            if (is_left_handle[i]) {
+                m_curr.V(i, 0) += dx_per_frame; // Move left handle right
+            } else if (is_right_handle[i]) {
+                m_curr.V(i, 0) -= dx_per_frame; // Move right handle left
             }
         }
 
@@ -182,7 +181,7 @@ int main(int argc, char **argv) {
 
             // Zero out gradient on handles
             for (int i = 0; i < m_curr.n_vertices(); ++i) {
-                if (is_handle[i]) {
+                if (is_left_handle[i] || is_right_handle[i]) {
                     G_total.row(i).setZero();
                 }
             }
@@ -199,7 +198,7 @@ int main(int argc, char **argv) {
 
             // Zero out direction on handles
             for (int i = 0; i < m_curr.n_vertices(); ++i) {
-                if (is_handle[i]) {
+                if (is_left_handle[i] || is_right_handle[i]) {
                     dir.row(i).setZero();
                 }
             }
