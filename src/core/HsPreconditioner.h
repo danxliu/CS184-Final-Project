@@ -11,6 +11,7 @@ namespace rsh {
 struct HsOperators {
     Eigen::SparseMatrix<double> L;
     Eigen::SparseMatrix<double> M;
+    Eigen::SparseMatrix<double> M_full;
     Eigen::VectorXd mass_diag;
 };
 

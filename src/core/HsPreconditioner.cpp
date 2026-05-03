@@ -21,6 +21,7 @@ namespace rsh {
 // Forward declaration for traits specialization
 struct HsOperator;
 struct HsRightPreconditionedOperator;
+struct HsLeftPreconditionedOperator;
 
 } // namespace rsh
 
@@ -30,6 +31,8 @@ template <>
 struct traits<rsh::HsOperator> : public traits<Eigen::MatrixXd> {};
 template <>
 struct traits<rsh::HsRightPreconditionedOperator> : public traits<Eigen::MatrixXd> {};
+template <>
+struct traits<rsh::HsLeftPreconditionedOperator> : public traits<Eigen::MatrixXd> {};
 } // namespace internal
 } // namespace Eigen
 
@@ -164,6 +167,17 @@ Eigen::VectorXd apply_lumped_mass(const HsOperators &hs,
         throw std::runtime_error("apply_lumped_mass: size mismatch");
     }
     return hs.mass_diag.array() * x.array();
+}
+
+Eigen::SparseMatrix<double> h1_metric_matrix(const HsOperators &hs) {
+    Eigen::SparseMatrix<double> h1 = hs.L;
+    if (hs.M_full.rows() == hs.L.rows() && hs.M_full.cols() == hs.L.cols()) {
+        h1 += hs.M_full;
+    } else {
+        h1 += hs.M;
+    }
+    h1.makeCompressed();
+    return h1;
 }
 
 Eigen::SparseMatrix<double> lifted_laplacian(const HsOperators &hs) {
@@ -470,12 +484,14 @@ struct ScalarFractionalLaplacian {
 
 enum class HsLaplacianInverseMode {
     RawStiffness,
-    LaplaceBeltrami
+    LaplaceBeltrami,
+    H1Metric
 };
 
 enum class HsConstantProjectionMode {
     Algebraic,
-    MassWeighted
+    MassWeighted,
+    None
 };
 
 struct HsSandwichPreconditioner {
@@ -496,12 +512,16 @@ struct HsSandwichPreconditioner {
           middle(middle),
           inverse_mode(inverse_mode),
           projection_mode(projection_mode) {
-        const Eigen::SparseMatrix<double> lifted = lifted_laplacian(hs);
-        laplacian_factor.compute(lifted);
+        const Eigen::SparseMatrix<double> system =
+            inverse_mode == HsLaplacianInverseMode::H1Metric
+                ? h1_metric_matrix(hs)
+                : lifted_laplacian(hs);
+        laplacian_factor.compute(system);
         factor_info = laplacian_factor.info();
     }
 
     void project(Eigen::VectorXd &x) const {
+        if (projection_mode == HsConstantProjectionMode::None) return;
         if (projection_mode == HsConstantProjectionMode::MassWeighted) {
             project_mass_constant_mode(hs, x);
         } else {
@@ -573,6 +593,34 @@ struct HsRightPreconditionedOperator
     }
 };
 
+struct HsLeftPreconditionedOperator
+    : public Eigen::EigenBase<HsLeftPreconditionedOperator> {
+    const HsOperator& op;
+    const HsSandwichPreconditioner& preconditioner;
+
+    HsLeftPreconditionedOperator(const HsOperator& op,
+                                 const HsSandwichPreconditioner& preconditioner)
+        : op(op), preconditioner(preconditioner) {}
+
+    typedef double Scalar;
+    typedef double RealScalar;
+    typedef int StorageIndex;
+    typedef int Index;
+    enum {
+        ColsAtCompileTime = Eigen::Dynamic,
+        MaxColsAtCompileTime = Eigen::Dynamic,
+        IsRowMajor = false
+    };
+
+    Index rows() const { return op.rows(); }
+    Index cols() const { return op.cols(); }
+
+    template<typename Rhs>
+    Eigen::VectorXd operator*(const Eigen::MatrixBase<Rhs>& x) const {
+        return preconditioner.solve(op * x);
+    }
+};
+
 HsOperators build_hs_operators(const MeshData &mesh) {
     HsOperators out;
     const int nv = mesh.n_vertices();
@@ -636,6 +684,31 @@ HsOperators build_hs_operators(const MeshData &mesh) {
         m_triplets.begin(), m_triplets.end(),
         [](double a, double b) { return a + b; });
     out.M.makeCompressed();
+
+    std::vector<Eigen::Triplet<double>> m_full_triplets;
+    m_full_triplets.reserve(static_cast<size_t>(9 * std::max(0, nf)));
+    for (int f = 0; f < nf; ++f) {
+        const int i = mesh.F(f, 0);
+        const int j = mesh.F(f, 1);
+        const int k = mesh.F(f, 2);
+        const Eigen::Vector3d vi = mesh.V.row(i).transpose();
+        const Eigen::Vector3d vj = mesh.V.row(j).transpose();
+        const Eigen::Vector3d vk = mesh.V.row(k).transpose();
+        const double area = 0.5 * (vj - vi).cross(vk - vi).norm();
+        const int ids[3] = {i, j, k};
+        for (int a = 0; a < 3; ++a) {
+            for (int b = 0; b < 3; ++b) {
+                const double val = area * (a == b ? 1.0 / 6.0 : 1.0 / 12.0);
+                m_full_triplets.emplace_back(ids[a], ids[b], val);
+            }
+        }
+    }
+
+    out.M_full.resize(nv, nv);
+    out.M_full.setFromTriplets(
+        m_full_triplets.begin(), m_full_triplets.end(),
+        [](double a, double b) { return a + b; });
+    out.M_full.makeCompressed();
 
     return out;
 }
