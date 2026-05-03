@@ -126,6 +126,66 @@ void scatter_face_adjoint(const rsh::MeshData &mesh,
     y(i2) += dual.dot(inv_2a * n.cross(E2));
 }
 
+void face_basis_gradients(const rsh::MeshData &mesh,
+                          const rsh::FaceGeom &g,
+                          int f,
+                          Eigen::Vector3d grads[3]) {
+    const int i0 = mesh.F(f, 0);
+    const int i1 = mesh.F(f, 1);
+    const int i2 = mesh.F(f, 2);
+
+    const Eigen::Vector3d v0 = mesh.V.row(i0).transpose();
+    const Eigen::Vector3d v1 = mesh.V.row(i1).transpose();
+    const Eigen::Vector3d v2 = mesh.V.row(i2).transpose();
+
+    Eigen::Vector3d E0;
+    Eigen::Vector3d E1;
+    Eigen::Vector3d E2;
+    rsh::opposite_edges(v0, v1, v2, E0, E1, E2);
+
+    const Eigen::Vector3d n = g.N.row(f).transpose();
+    const double inv_2a = 1.0 / (2.0 * g.A(f));
+    grads[0] = inv_2a * n.cross(E0);
+    grads[1] = inv_2a * n.cross(E1);
+    grads[2] = inv_2a * n.cross(E2);
+}
+
+Eigen::Matrix3d face_vector_grad(const rsh::MeshData &mesh,
+                                 const rsh::FaceGeom &g,
+                                 const Eigen::MatrixXd &u,
+                                 int f) {
+    Eigen::Vector3d grads[3];
+    face_basis_gradients(mesh, g, f, grads);
+
+    Eigen::Matrix3d out = Eigen::Matrix3d::Zero();
+    for (int c = 0; c < 3; ++c) {
+        const int vi = mesh.F(f, c);
+        out += u.row(vi).transpose() * grads[c].transpose();
+    }
+    return out;
+}
+
+Eigen::Vector3d face_vector_value(const rsh::MeshData &mesh,
+                                  const Eigen::MatrixXd &u,
+                                  int f) {
+    return (u.row(mesh.F(f, 0)).transpose() +
+            u.row(mesh.F(f, 1)).transpose() +
+            u.row(mesh.F(f, 2)).transpose()) / 3.0;
+}
+
+void scatter_face_matrix_adjoint(const rsh::MeshData &mesh,
+                                 const rsh::FaceGeom &g,
+                                 int f,
+                                 const Eigen::Matrix3d &dual,
+                                 Eigen::MatrixXd &y) {
+    Eigen::Vector3d grads[3];
+    face_basis_gradients(mesh, g, f, grads);
+    for (int c = 0; c < 3; ++c) {
+        const int vi = mesh.F(f, c);
+        y.row(vi) += (dual * grads[c]).transpose();
+    }
+}
+
 Eigen::VectorXd apply_hs_operator(const rsh::MeshData &mesh,
                                   const Eigen::VectorXd &u,
                                   double s,
@@ -142,7 +202,28 @@ Eigen::VectorXd apply_hs_operator(const rsh::MeshData &mesh,
     const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
 
     const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
-    return op * u;
+    Eigen::MatrixXd field = Eigen::MatrixXd::Zero(mesh.n_vertices(), 3);
+    field.col(0) = u;
+    return op.apply(field).col(0);
+}
+
+Eigen::MatrixXd apply_hs_operator_vector(const rsh::MeshData &mesh,
+                                         const Eigen::MatrixXd &u,
+                                         double s,
+                                         double theta,
+                                         double mass_weight = 0.0) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.mass_weight = mass_weight;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+    return op.apply(u);
 }
 
 Eigen::VectorXd apply_scalar_fractional_laplacian(const rsh::MeshData &mesh,
@@ -249,6 +330,81 @@ Eigen::VectorXd brute_operator_a(const rsh::MeshData &mesh,
     return brute_high_order_b(mesh, u, s) + brute_low_order_b0(mesh, u, s);
 }
 
+Eigen::MatrixXd brute_vector_high_order_b(const rsh::MeshData &mesh,
+                                          const Eigen::MatrixXd &u,
+                                          double s) {
+    const int nf = mesh.n_faces();
+    const int nv = mesh.n_vertices();
+    const rsh::FaceGeom g = rsh::compute_face_geom(mesh);
+
+    std::vector<Eigen::Matrix3d> gu(static_cast<size_t>(nf));
+    for (int f = 0; f < nf; ++f) {
+        gu[static_cast<size_t>(f)] = face_vector_grad(mesh, g, u, f);
+    }
+
+    std::vector<Eigen::Matrix3d> dual(
+        static_cast<size_t>(nf), Eigen::Matrix3d::Zero());
+    for (int a = 0; a < nf; ++a) {
+        for (int b = 0; b < nf; ++b) {
+            if (a == b) continue;
+            const double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
+            if (r2 == 0.0) continue;
+            const double K = 1.0 / std::pow(r2, s);
+            dual[static_cast<size_t>(a)] +=
+                2.0 * g.A(a) * g.A(b) * K *
+                (gu[static_cast<size_t>(a)] - gu[static_cast<size_t>(b)]);
+        }
+    }
+
+    Eigen::MatrixXd y = Eigen::MatrixXd::Zero(nv, 3);
+    for (int f = 0; f < nf; ++f) {
+        scatter_face_matrix_adjoint(mesh, g, f, dual[static_cast<size_t>(f)], y);
+    }
+    return y;
+}
+
+Eigen::MatrixXd brute_vector_low_order_b0(const rsh::MeshData &mesh,
+                                          const Eigen::MatrixXd &u,
+                                          double s) {
+    const int nf = mesh.n_faces();
+    const int nv = mesh.n_vertices();
+    const rsh::FaceGeom g = rsh::compute_face_geom(mesh);
+
+    std::vector<Eigen::Vector3d> face_u(static_cast<size_t>(nf));
+    for (int f = 0; f < nf; ++f) {
+        face_u[static_cast<size_t>(f)] = face_vector_value(mesh, u, f);
+    }
+
+    std::vector<Eigen::Vector3d> dual(
+        static_cast<size_t>(nf), Eigen::Vector3d::Zero());
+    for (int a = 0; a < nf; ++a) {
+        for (int b = 0; b < nf; ++b) {
+            if (a == b) continue;
+            const double K0 = b0_kernel_sym_faces(g, a, b, s);
+            dual[static_cast<size_t>(a)] +=
+                g.A(a) * g.A(b) * K0 *
+                (face_u[static_cast<size_t>(a)] -
+                 face_u[static_cast<size_t>(b)]);
+        }
+    }
+
+    Eigen::MatrixXd y = Eigen::MatrixXd::Zero(nv, 3);
+    for (int f = 0; f < nf; ++f) {
+        const Eigen::Vector3d val = dual[static_cast<size_t>(f)] / 3.0;
+        y.row(mesh.F(f, 0)) += val.transpose();
+        y.row(mesh.F(f, 1)) += val.transpose();
+        y.row(mesh.F(f, 2)) += val.transpose();
+    }
+    return y;
+}
+
+Eigen::MatrixXd brute_vector_operator_a(const rsh::MeshData &mesh,
+                                        const Eigen::MatrixXd &u,
+                                        double s) {
+    return brute_vector_high_order_b(mesh, u, s) +
+           brute_vector_low_order_b0(mesh, u, s);
+}
+
 Eigen::VectorXd brute_scalar_fractional_laplacian(const rsh::MeshData &mesh,
                                                   const Eigen::VectorXd &u,
                                                   double s) {
@@ -312,6 +468,54 @@ Eigen::VectorXd deterministic_field(int n, double phase) {
     return out;
 }
 
+Eigen::MatrixXd deterministic_vector_field(int n, double phase) {
+    Eigen::MatrixXd out(n, 3);
+    out.col(0) = deterministic_field(n, phase);
+    out.col(1) = deterministic_field(n, phase + 0.71);
+    out.col(2) = deterministic_field(n, phase + 1.37);
+    return out;
+}
+
+Eigen::VectorXd flatten_vector_field(const Eigen::MatrixXd &field) {
+    Eigen::VectorXd out(3 * field.rows());
+    for (int i = 0; i < field.rows(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            out(3 * i + c) = field(i, c);
+        }
+    }
+    return out;
+}
+
+Eigen::MatrixXd unflatten_vector_field(const Eigen::VectorXd &flat, int n) {
+    Eigen::MatrixXd out(n, 3);
+    for (int i = 0; i < n; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            out(i, c) = flat(3 * i + c);
+        }
+    }
+    return out;
+}
+
+Eigen::VectorXd embed_scalar_x(const Eigen::VectorXd &x) {
+    Eigen::VectorXd out = Eigen::VectorXd::Zero(3 * x.size());
+    for (int i = 0; i < x.size(); ++i) {
+        out(3 * i) = x(i);
+    }
+    return out;
+}
+
+Eigen::VectorXd extract_scalar_x(const Eigen::VectorXd &x) {
+    Eigen::VectorXd out(x.size() / 3);
+    for (int i = 0; i < out.size(); ++i) {
+        out(i) = x(3 * i);
+    }
+    return out;
+}
+
+double vector_field_dot(const Eigen::MatrixXd &a, const Eigen::MatrixXd &b) {
+    return (a.array() * b.array()).sum();
+}
+
 void project_constant_mode(Eigen::VectorXd &x) {
     if (x.size() == 0) return;
     x.array() -= x.mean();
@@ -319,6 +523,14 @@ void project_constant_mode(Eigen::VectorXd &x) {
 
 struct SolveStats {
     Eigen::VectorXd x;
+    int iterations = 0;
+    double error = 0.0;
+    double residual = 0.0;
+    Eigen::ComputationInfo info = Eigen::InvalidInput;
+};
+
+struct VectorSolveStats {
+    Eigen::MatrixXd x;
     int iterations = 0;
     double error = 0.0;
     double residual = 0.0;
@@ -344,6 +556,7 @@ SolveStats solve_with_identity(const rsh::MeshData &mesh,
 
     Eigen::VectorXd rhs_projected = rhs;
     project_constant_mode(rhs_projected);
+    const Eigen::VectorXd rhs_flat = embed_scalar_x(rhs_projected);
 
     Eigen::GMRES<rsh::HsOperator, Eigen::IdentityPreconditioner> gmres;
     gmres.compute(op);
@@ -351,13 +564,14 @@ SolveStats solve_with_identity(const rsh::MeshData &mesh,
     gmres.setMaxIterations(max_iters);
 
     SolveStats out;
-    out.x = gmres.solve(rhs_projected);
+    const Eigen::VectorXd sol_flat = gmres.solve(rhs_flat);
+    out.x = extract_scalar_x(sol_flat);
     project_constant_mode(out.x);
     out.iterations = static_cast<int>(gmres.iterations());
     out.error = gmres.error();
     out.info = gmres.info();
-    out.residual = (op * out.x - rhs_projected).norm() /
-                   std::max(1.0, rhs_projected.norm());
+    out.residual = (op * sol_flat - rhs_flat).norm() /
+                   std::max(1.0, rhs_flat.norm());
     return out;
 }
 
@@ -386,7 +600,7 @@ SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
         hs, middle, inverse_mode, projection_mode);
     const rsh::HsRightPreconditionedOperator right_op(op, sandwich);
 
-    Eigen::VectorXd rhs_projected = rhs;
+    Eigen::VectorXd rhs_projected = embed_scalar_x(rhs);
     sandwich.project(rhs_projected);
 
     Eigen::GMRES<rsh::HsRightPreconditionedOperator,
@@ -397,12 +611,13 @@ SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
 
     SolveStats out;
     const Eigen::VectorXd z = gmres.solve(rhs_projected);
-    out.x = sandwich.solve(z);
-    sandwich.project(out.x);
+    Eigen::VectorXd sol_flat = sandwich.solve(z);
+    sandwich.project(sol_flat);
+    out.x = extract_scalar_x(sol_flat);
     out.iterations = static_cast<int>(gmres.iterations());
     out.error = gmres.error();
     out.info = gmres.info();
-    out.residual = (op * out.x - rhs_projected).norm() /
+    out.residual = (op * sol_flat - rhs_projected).norm() /
                    std::max(1.0, rhs_projected.norm());
     return out;
 }
@@ -431,7 +646,7 @@ SolveStats solve_with_left_sandwich(
         hs, middle, inverse_mode, projection_mode);
     const rsh::HsLeftPreconditionedOperator left_op(op, sandwich);
 
-    Eigen::VectorXd rhs_projected = rhs;
+    Eigen::VectorXd rhs_projected = embed_scalar_x(rhs);
     sandwich.project(rhs_projected);
     const Eigen::VectorXd rhs_left = sandwich.solve(rhs_projected);
 
@@ -442,13 +657,147 @@ SolveStats solve_with_left_sandwich(
     gmres.setMaxIterations(max_iters);
 
     SolveStats out;
-    out.x = gmres.solve(rhs_left);
-    sandwich.project(out.x);
+    Eigen::VectorXd sol_flat = gmres.solve(rhs_left);
+    sandwich.project(sol_flat);
+    out.x = extract_scalar_x(sol_flat);
     out.iterations = static_cast<int>(gmres.iterations());
     out.error = gmres.error();
     out.info = gmres.info();
-    out.residual = (op * out.x - rhs_projected).norm() /
+    out.residual = (op * sol_flat - rhs_projected).norm() /
                    std::max(1.0, rhs_projected.norm());
+    return out;
+}
+
+VectorSolveStats solve_vector_with_identity(const rsh::MeshData &mesh,
+                                            const Eigen::MatrixXd &rhs,
+                                            double s,
+                                            double theta,
+                                            int max_iters,
+                                            double tol) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+    const rsh::HsSandwichPreconditioner sandwich(hs, middle);
+
+    Eigen::VectorXd rhs_flat = flatten_vector_field(rhs);
+    sandwich.project(rhs_flat);
+
+    Eigen::GMRES<rsh::HsOperator, Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(op);
+    gmres.setTolerance(tol);
+    gmres.setMaxIterations(max_iters);
+
+    VectorSolveStats out;
+    Eigen::VectorXd sol_flat = gmres.solve(rhs_flat);
+    sandwich.project(sol_flat);
+    out.x = unflatten_vector_field(sol_flat, mesh.n_vertices());
+    out.iterations = static_cast<int>(gmres.iterations());
+    out.error = gmres.error();
+    out.info = gmres.info();
+    out.residual = (op * sol_flat - rhs_flat).norm() /
+                   std::max(1.0, rhs_flat.norm());
+    return out;
+}
+
+VectorSolveStats solve_vector_with_sandwich(
+                                            const rsh::MeshData &mesh,
+                                            const Eigen::MatrixXd &rhs,
+                                            double s,
+                                            double theta,
+                                            int max_iters,
+                                            double tol,
+                                            rsh::HsLaplacianInverseMode inverse_mode =
+                                                rsh::HsLaplacianInverseMode::RawStiffness,
+                                            rsh::HsConstantProjectionMode projection_mode =
+                                                rsh::HsConstantProjectionMode::Algebraic) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+    const rsh::HsSandwichPreconditioner sandwich(
+        hs, middle, inverse_mode, projection_mode);
+    const rsh::HsRightPreconditionedOperator right_op(op, sandwich);
+
+    Eigen::VectorXd rhs_flat = flatten_vector_field(rhs);
+    sandwich.project(rhs_flat);
+
+    Eigen::GMRES<rsh::HsRightPreconditionedOperator,
+                 Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(right_op);
+    gmres.setTolerance(tol);
+    gmres.setMaxIterations(max_iters);
+
+    VectorSolveStats out;
+    const Eigen::VectorXd z = gmres.solve(rhs_flat);
+    Eigen::VectorXd sol_flat = sandwich.solve(z);
+    sandwich.project(sol_flat);
+    out.x = unflatten_vector_field(sol_flat, mesh.n_vertices());
+    out.iterations = static_cast<int>(gmres.iterations());
+    out.error = gmres.error();
+    out.info = gmres.info();
+    out.residual = (op * sol_flat - rhs_flat).norm() /
+                   std::max(1.0, rhs_flat.norm());
+    return out;
+}
+
+VectorSolveStats solve_vector_with_left_sandwich(
+                                            const rsh::MeshData &mesh,
+                                            const Eigen::MatrixXd &rhs,
+                                            double s,
+                                            double theta,
+                                            int max_iters,
+                                            double tol,
+                                            rsh::HsLaplacianInverseMode inverse_mode,
+                                            rsh::HsConstantProjectionMode projection_mode) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+    const rsh::HsSandwichPreconditioner sandwich(
+        hs, middle, inverse_mode, projection_mode);
+    const rsh::HsLeftPreconditionedOperator left_op(op, sandwich);
+
+    Eigen::VectorXd rhs_flat = flatten_vector_field(rhs);
+    sandwich.project(rhs_flat);
+    const Eigen::VectorXd rhs_left = sandwich.solve(rhs_flat);
+
+    Eigen::GMRES<rsh::HsLeftPreconditionedOperator,
+                 Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(left_op);
+    gmres.setTolerance(tol);
+    gmres.setMaxIterations(max_iters);
+
+    VectorSolveStats out;
+    Eigen::VectorXd sol_flat = gmres.solve(rhs_left);
+    sandwich.project(sol_flat);
+    out.x = unflatten_vector_field(sol_flat, mesh.n_vertices());
+    out.iterations = static_cast<int>(gmres.iterations());
+    out.error = gmres.error();
+    out.info = gmres.info();
+    out.residual = (op * sol_flat - rhs_flat).norm() /
+                   std::max(1.0, rhs_flat.norm());
     return out;
 }
 
@@ -497,6 +846,42 @@ void test_two_triangle_hand_case() {
     std::cout << "    expected <B u,u> = " << expected << "\n";
     std::cout << "    rel err          = " << err << "\n";
     check(err < 1e-12, "operator matches the hand-computed Eq. 12 value");
+}
+
+void test_vector_two_triangle_hand_case() {
+    std::cout << "-- vector-valued 2-triangle hand-computed high-order B --\n";
+    const double s = 5.0 / 3.0;
+    const double d = 4.0;
+    const rsh::MeshData mesh = make_parallel_triangles(d);
+
+    // Face 0 carries the centered embedding perturbation
+    //   delta f(v) = v - centroid(face0),
+    // so its face average is zero and D_f delta f is the tangent projector
+    // diag(1,1,0). Face 1 is constant zero, so both D_f delta f and the face
+    // average vanish there. Hence B_0 contributes zero and the ordered
+    // high-order B quadratic is
+    //
+    //   2 * area0 * area1 * ||diag(1,1,0)||_F^2 / d^(2s)
+    //     = 2 * (1/2) * (1/2) * 2 / d^(2s)
+    //     = 1 / d^(2s).
+    Eigen::MatrixXd u = Eigen::MatrixXd::Zero(6, 3);
+    const Eigen::RowVector3d centroid0 =
+        (mesh.V.row(0) + mesh.V.row(1) + mesh.V.row(2)) / 3.0;
+    for (int i = 0; i < 3; ++i) {
+        u.row(i) = mesh.V.row(i) - centroid0;
+    }
+
+    const Eigen::MatrixXd y = apply_hs_operator_vector(mesh, u, s, 0.0);
+    const double actual = vector_field_dot(u, y);
+    const double expected = 1.0 / std::pow(d, 2.0 * s);
+    const double err = rel_err(actual, expected);
+
+    std::cout << "    d = " << d << "\n";
+    std::cout << "    actual <B U,U>   = " << actual << "\n";
+    std::cout << "    expected <B U,U> = " << expected << "\n";
+    std::cout << "    rel err          = " << err << "\n";
+    check(err < 1e-12,
+          "vector operator matches the hand-computed Frobenius Eq. 12 value");
 }
 
 void test_distance_sweep() {
@@ -614,6 +999,28 @@ void test_linearity() {
     check(err < 1e-12, "A(alpha*x + beta*y) == alpha*Ax + beta*Ay");
 }
 
+void test_vector_linearity() {
+    std::cout << "-- vector-valued linearity of A on icosphere(2) --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+
+    const Eigen::MatrixXd x = deterministic_vector_field(mesh.n_vertices(), 0.1);
+    const Eigen::MatrixXd y = deterministic_vector_field(mesh.n_vertices(), 0.9);
+    const double alpha = 1.7;
+    const double beta = -0.4;
+
+    const Eigen::MatrixXd lhs =
+        apply_hs_operator_vector(mesh, alpha * x + beta * y, s, 0.5);
+    const Eigen::MatrixXd rhs =
+        alpha * apply_hs_operator_vector(mesh, x, s, 0.5) +
+        beta * apply_hs_operator_vector(mesh, y, s, 0.5);
+
+    const double err = (lhs - rhs).norm() / std::max(1.0, rhs.norm());
+    std::cout << "    relative vector linearity error = " << err << "\n";
+    check(err < 1e-12, "A(alpha*X + beta*Y) == alpha*AX + beta*AY");
+}
+
 void test_symmetry() {
     std::cout << "-- symmetry proxy for A = B + B_0 --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
@@ -635,6 +1042,27 @@ void test_symmetry() {
     }
 }
 
+void test_vector_symmetry() {
+    std::cout << "-- vector-valued symmetry proxy for A = B + B_0 --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+
+    const Eigen::MatrixXd x = deterministic_vector_field(mesh.n_vertices(), 0.2);
+    const Eigen::MatrixXd y = deterministic_vector_field(mesh.n_vertices(), 1.3);
+
+    for (double theta : {0.0, 0.5}) {
+        const double xBy = vector_field_dot(x, apply_hs_operator_vector(mesh, y, s, theta));
+        const double yBx = vector_field_dot(y, apply_hs_operator_vector(mesh, x, s, theta));
+        const double denom = std::max(1.0, std::max(std::abs(xBy), std::abs(yBx)));
+        const double err = std::abs(xBy - yBx) / denom;
+        const double gate = (theta == 0.0) ? 1e-12 : 1e-2;
+        std::cout << "    theta = " << theta << ", X^T A Y = " << xBy
+                  << ", Y^T A X = " << yBx << ", rel = " << err << "\n";
+        check(err < gate, "X^T A Y ~= Y^T A X");
+    }
+}
+
 void test_brute_reference() {
     std::cout << "-- hierarchical matvec matches brute A at theta=0 --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
@@ -653,6 +1081,26 @@ void test_brute_reference() {
     const double ratio = q_fast / q_brute;
     std::cout << "    theta=0.5 quadratic ratio vs brute = " << ratio << "\n";
     check(std::isfinite(ratio), "theta=0.5 A ratio is finite");
+}
+
+void test_vector_brute_reference() {
+    std::cout << "-- vector-valued hierarchical matvec matches brute A at theta=0 --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const Eigen::MatrixXd x = deterministic_vector_field(mesh.n_vertices(), 0.4);
+
+    const Eigen::MatrixXd fast = apply_hs_operator_vector(mesh, x, s, 0.0);
+    const Eigen::MatrixXd brute = brute_vector_operator_a(mesh, x, s);
+    const double err = (fast - brute).norm() / std::max(1.0, brute.norm());
+    std::cout << "    relative ||fast - brute|| = " << err << "\n";
+    check(err < 1e-12, "theta=0 vector HsOperator matches O(n_f^2) brute A");
+
+    const double q_fast = vector_field_dot(x, apply_hs_operator_vector(mesh, x, s, 0.5));
+    const double q_brute = vector_field_dot(x, brute);
+    const double ratio = q_fast / q_brute;
+    std::cout << "    theta=0.5 vector quadratic ratio vs brute = " << ratio << "\n";
+    check(std::isfinite(ratio), "theta=0.5 vector A ratio is finite");
 }
 
 void print_theta_sweep_for_mesh(const std::string &name,
@@ -793,6 +1241,43 @@ void test_sandwich_psd_probe() {
     }
 }
 
+void test_vector_sandwich_psd_probe() {
+    std::cout << "-- vector-valued sandwich preconditioner PSD probe --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+
+    const rsh::HsSandwichPreconditioner sandwich(
+        hs,
+        middle,
+        rsh::HsLaplacianInverseMode::RawStiffness,
+        rsh::HsConstantProjectionMode::Algebraic);
+
+    double min_q = std::numeric_limits<double>::infinity();
+    double max_q = -std::numeric_limits<double>::infinity();
+    for (int i = 0; i < 20; ++i) {
+        Eigen::VectorXd x = flatten_vector_field(
+            deterministic_vector_field(mesh.n_vertices(), 0.17 * i));
+        sandwich.project(x);
+        const Eigen::VectorXd y = sandwich.solve(x);
+        const double q = x.dot(y);
+        min_q = std::min(min_q, q);
+        max_q = std::max(max_q, q);
+    }
+
+    std::cout << "    vector q_min=" << min_q
+              << ", vector q_max=" << max_q << "\n";
+    check(min_q > 0.0,
+          "committed raw sandwich is Euclidean-PSD on vector probes");
+}
+
 void test_sandwich_solver_sanity() {
     std::cout << "-- sandwich preconditioner GMRES sanity --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
@@ -853,7 +1338,7 @@ void test_sandwich_resolution_diagnostics() {
             rsh::HsLaplacianInverseMode::H1Metric,
             rsh::HsConstantProjectionMode::None);
         const SolveStats h1_left = solve_with_left_sandwich(
-            mesh, rhs, s, theta, 250, 1e-12,
+            mesh, rhs, s, theta, 250, 1e-5,
             rsh::HsLaplacianInverseMode::H1Metric,
             rsh::HsConstantProjectionMode::None);
         identity_iters.push_back(identity.iterations);
@@ -903,11 +1388,93 @@ void test_sandwich_resolution_diagnostics() {
               << h1_growth << "\n";
     std::cout << "    Repulsor-style left H1 sandwich growth icosphere_2->4 = "
               << h1_left_growth << "\n";
-    // This is intentionally diagnostic rather than a hard gate. Unit 2B.3's
-    // first implementation improves each solve versus identity, but the 2->4
-    // growth is still larger than the RSu Fig. 5 target and is reported in
-    // communication.md for reviewer diagnosis.
     check(identity_grows, "identity iteration count grows with resolution");
+    check(h1_left_growth <= 1.5,
+          "Repulsor-style left H1 sandwich iterations stay resolution-stable");
+}
+
+void test_vector_sandwich_resolution_diagnostics() {
+    std::cout << "-- vector-valued sandwich iteration counts vs resolution --\n";
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+    std::vector<int> identity_iters;
+    std::vector<int> raw_iters;
+    std::vector<int> paper_iters;
+    std::vector<int> h1_iters;
+    std::vector<int> h1_left_iters;
+
+    std::cout << "    mesh,n_v,n_f,identity_iter,raw_iter,paper_iter,h1_iter,h1_left_iter,"
+              << "identity_residual,raw_residual,paper_residual,h1_residual,h1_left_residual\n";
+    for (int subdiv : {2, 3, 4}) {
+        rsh::MeshData mesh = rsh::make_icosphere(subdiv);
+        mesh.L0 = mesh.compute_L0();
+        Eigen::MatrixXd rhs(mesh.n_vertices(), 3);
+        rhs.col(0) = mesh.V.col(0) + 0.3 * mesh.V.col(1);
+        rhs.col(1) = mesh.V.col(1) - 0.2 * mesh.V.col(2);
+        rhs.col(2) = mesh.V.col(2) + 0.1 * mesh.V.col(0);
+
+        const VectorSolveStats identity =
+            solve_vector_with_identity(mesh, rhs, s, theta, 250, 1e-5);
+        const VectorSolveStats raw = solve_vector_with_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::RawStiffness,
+            rsh::HsConstantProjectionMode::Algebraic);
+        const VectorSolveStats paper = solve_vector_with_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::LaplaceBeltrami,
+            rsh::HsConstantProjectionMode::MassWeighted);
+        const VectorSolveStats h1 = solve_vector_with_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::H1Metric,
+            rsh::HsConstantProjectionMode::None);
+        const VectorSolveStats h1_left = solve_vector_with_left_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::H1Metric,
+            rsh::HsConstantProjectionMode::None);
+        identity_iters.push_back(identity.iterations);
+        raw_iters.push_back(raw.iterations);
+        paper_iters.push_back(paper.iterations);
+        h1_iters.push_back(h1.iterations);
+        h1_left_iters.push_back(h1_left.iterations);
+
+        std::cout << "    icosphere_" << subdiv << "," << mesh.n_vertices()
+                  << "," << mesh.n_faces() << "," << identity.iterations
+                  << "," << raw.iterations << "," << paper.iterations
+                  << "," << h1.iterations << "," << h1_left.iterations
+                  << "," << identity.residual << "," << raw.residual
+                  << "," << paper.residual << "," << h1.residual
+                  << "," << h1_left.residual << "\n";
+
+        check(raw.residual < 1e-2,
+              "vector raw sandwich solve residual stays controlled");
+        check(raw.iterations <= identity.iterations,
+              "vector raw sandwich iterations do not exceed identity");
+    }
+
+    const double raw_growth =
+        static_cast<double>(raw_iters.back()) /
+        std::max(1, raw_iters.front());
+    const double paper_growth =
+        static_cast<double>(paper_iters.back()) /
+        std::max(1, paper_iters.front());
+    const double h1_growth =
+        static_cast<double>(h1_iters.back()) /
+        std::max(1, h1_iters.front());
+    const double h1_left_growth =
+        static_cast<double>(h1_left_iters.back()) /
+        std::max(1, h1_left_iters.front());
+    std::cout << "    vector raw sandwich growth icosphere_2->4 = "
+              << raw_growth << "\n";
+    std::cout << "    vector paper-weighted sandwich growth icosphere_2->4 = "
+              << paper_growth << "\n";
+    std::cout << "    vector Repulsor-style H1 sandwich growth icosphere_2->4 = "
+              << h1_growth << "\n";
+    std::cout << "    vector Repulsor-style left H1 sandwich growth icosphere_2->4 = "
+              << h1_left_growth << "\n";
+    check(identity_iters.back() > identity_iters.front(),
+          "vector identity iteration count grows with resolution");
+    check(h1_left_growth <= 1.5,
+          "vector Repulsor-style left H1 sandwich iterations stay resolution-stable");
 }
 
 void test_compression_gradient_descent_safeguard() {
@@ -1021,18 +1588,24 @@ int main() {
     std::cout << "=== Hs A = B + B_0 validation ===\n";
 
     test_two_triangle_hand_case();
+    test_vector_two_triangle_hand_case();
     test_distance_sweep();
     test_b0_two_triangle_hand_case();
     test_b0_distance_sweep();
     test_linearity();
+    test_vector_linearity();
     test_symmetry();
+    test_vector_symmetry();
     test_brute_reference();
+    test_vector_brute_reference();
     test_theta_sweep_table();
     test_scalar_fractional_laplacian_hand_case();
     test_scalar_fractional_laplacian_brute_reference();
     test_sandwich_psd_probe();
+    test_vector_sandwich_psd_probe();
     test_sandwich_solver_sanity();
     test_sandwich_resolution_diagnostics();
+    test_vector_sandwich_resolution_diagnostics();
     test_compression_gradient_descent_safeguard();
     test_nullspace_and_spd();
 

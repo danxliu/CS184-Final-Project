@@ -114,6 +114,93 @@ double face_average(const MeshData &mesh,
             x(mesh.F(f, 2))) / 3.0;
 }
 
+Eigen::VectorXd flatten_vertex_field(const Eigen::MatrixXd &x) {
+    if (x.cols() != 3) {
+        throw std::runtime_error("flatten_vertex_field: input must have three columns");
+    }
+    Eigen::VectorXd out(3 * x.rows());
+    for (int i = 0; i < x.rows(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            out(3 * i + c) = x(i, c);
+        }
+    }
+    return out;
+}
+
+Eigen::MatrixXd unflatten_vertex_field(const Eigen::VectorXd &x, int nv) {
+    if (x.size() != 3 * nv) {
+        throw std::runtime_error("unflatten_vertex_field: size mismatch");
+    }
+    Eigen::MatrixXd out(nv, 3);
+    for (int i = 0; i < nv; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            out(i, c) = x(3 * i + c);
+        }
+    }
+    return out;
+}
+
+Eigen::Vector3d face_vector_average(const MeshData &mesh,
+                                    const Eigen::MatrixXd &x,
+                                    int f) {
+    return (x.row(mesh.F(f, 0)).transpose() +
+            x.row(mesh.F(f, 1)).transpose() +
+            x.row(mesh.F(f, 2)).transpose()) / 3.0;
+}
+
+void face_basis_gradients(const MeshData &mesh,
+                          const FaceGeom &g,
+                          int f,
+                          Eigen::Vector3d grads[3]) {
+    const int i0 = mesh.F(f, 0);
+    const int i1 = mesh.F(f, 1);
+    const int i2 = mesh.F(f, 2);
+
+    const Eigen::Vector3d v0 = mesh.V.row(i0).transpose();
+    const Eigen::Vector3d v1 = mesh.V.row(i1).transpose();
+    const Eigen::Vector3d v2 = mesh.V.row(i2).transpose();
+
+    Eigen::Vector3d E0;
+    Eigen::Vector3d E1;
+    Eigen::Vector3d E2;
+    opposite_edges(v0, v1, v2, E0, E1, E2);
+
+    const Eigen::Vector3d n = g.N.row(f).transpose();
+    const double inv_2a = 1.0 / (2.0 * g.A(f));
+    grads[0] = inv_2a * n.cross(E0);
+    grads[1] = inv_2a * n.cross(E1);
+    grads[2] = inv_2a * n.cross(E2);
+}
+
+Eigen::Matrix3d face_vector_gradient(const MeshData &mesh,
+                                     const FaceGeom &g,
+                                     const Eigen::MatrixXd &x,
+                                     int f) {
+    Eigen::Vector3d grads[3];
+    face_basis_gradients(mesh, g, f, grads);
+
+    Eigen::Matrix3d out = Eigen::Matrix3d::Zero();
+    for (int c = 0; c < 3; ++c) {
+        const int vi = mesh.F(f, c);
+        const Eigen::Vector3d value = x.row(vi).transpose();
+        out += value * grads[c].transpose();
+    }
+    return out;
+}
+
+void scatter_face_matrix_adjoint(const MeshData &mesh,
+                                 const FaceGeom &g,
+                                 int f,
+                                 const Eigen::Matrix3d &face_dual,
+                                 Eigen::MatrixXd &y) {
+    Eigen::Vector3d grads[3];
+    face_basis_gradients(mesh, g, f, grads);
+    for (int c = 0; c < 3; ++c) {
+        const int vi = mesh.F(f, c);
+        y.row(vi) += (face_dual * grads[c]).transpose();
+    }
+}
+
 double b0_kernel_sym_faces(const FaceGeom &g,
                            int a,
                            int b,
@@ -169,6 +256,24 @@ Eigen::VectorXd apply_lumped_mass(const HsOperators &hs,
     return hs.mass_diag.array() * x.array();
 }
 
+bool is_flat_vector_field(const HsOperators &hs, const Eigen::VectorXd &x) {
+    return hs.mass_diag.size() > 0 && x.size() == 3 * hs.mass_diag.size();
+}
+
+Eigen::VectorXd apply_lumped_mass_general(const HsOperators &hs,
+                                          const Eigen::VectorXd &x) {
+    if (is_flat_vector_field(hs, x)) {
+        Eigen::VectorXd out(x.size());
+        for (int i = 0; i < hs.mass_diag.size(); ++i) {
+            for (int c = 0; c < 3; ++c) {
+                out(3 * i + c) = hs.mass_diag(i) * x(3 * i + c);
+            }
+        }
+        return out;
+    }
+    return apply_lumped_mass(hs, x);
+}
+
 Eigen::SparseMatrix<double> h1_metric_matrix(const HsOperators &hs) {
     Eigen::SparseMatrix<double> h1 = hs.L;
     if (hs.M_full.rows() == hs.L.rows() && hs.M_full.cols() == hs.L.cols()) {
@@ -190,9 +295,11 @@ Eigen::SparseMatrix<double> lifted_laplacian(const HsOperators &hs) {
 
 } // namespace
 
-// Matrix-free operator for A = sigma * (B + B_0), where B is the
-// gradient-based high-order term from RSu Eq. 7 / Eq. 12 and B_0 is the
-// low-order TPE-modulated term from RSu Eq. 8.
+// Matrix-free vector-valued operator for A = sigma * (B + B_0), where B is
+// the high-order Frobenius D_f(delta f) term from RSu Eq. 7 / Eq. 12 and
+// B_0 is the low-order TPE-modulated term from RSu Eq. 8. The Eigen
+// interface is a flattened 3-vector field, ordered as
+// (v0.x, v0.y, v0.z, v1.x, ...).
 struct HsOperator : public Eigen::EigenBase<HsOperator> {
     const MeshData& mesh;
     const HsPreconditionerParams& params;
@@ -215,31 +322,42 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
         IsRowMajor = false
     };
 
-    Index rows() const { return mesh.n_vertices(); }
-    Index cols() const { return mesh.n_vertices(); }
+    Index rows() const { return 3 * mesh.n_vertices(); }
+    Index cols() const { return 3 * mesh.n_vertices(); }
 
     template<typename Rhs>
     Eigen::VectorXd operator*(const Eigen::MatrixBase<Rhs>& x) const {
+        Eigen::VectorXd flat = x.derived();
+        if (flat.size() != rows()) {
+            throw std::runtime_error("HsOperator::operator*: size mismatch");
+        }
+        return flatten_vertex_field(apply(unflatten_vertex_field(flat, mesh.n_vertices())));
+    }
+
+    Eigen::MatrixXd apply(const Eigen::MatrixXd &x) const {
         const int nv = mesh.n_vertices();
         const int nf = mesh.n_faces();
         const double power = params.s;
-
-        // 1. Per-face gradients D_f x for B and face barycenter values for B_0.
-        std::vector<Eigen::Vector3d> grad_face(static_cast<size_t>(nf));
-        Eigen::VectorXd face_x(nf);
-        for (int i = 0; i < nf; ++i) {
-            grad_face[static_cast<size_t>(i)] =
-                face_scalar_gradient(mesh, g, x, i);
-            face_x(i) = face_average(mesh, x, i);
+        if (x.rows() != nv || x.cols() != 3) {
+            throw std::runtime_error("HsOperator::apply: input must be n_vertices x 3");
         }
 
-        // 2. Pre-aggregate Q_U = sum_{a in U} A_a D_f x(a).
-        std::vector<Eigen::Vector3d> Q(
-            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
+        // 1. Per-face D_f delta f matrices for B and face averages for B_0.
+        std::vector<Eigen::Matrix3d> grad_face(static_cast<size_t>(nf));
+        std::vector<Eigen::Vector3d> face_x(static_cast<size_t>(nf));
+        for (int i = 0; i < nf; ++i) {
+            grad_face[static_cast<size_t>(i)] =
+                face_vector_gradient(mesh, g, x, i);
+            face_x[static_cast<size_t>(i)] = face_vector_average(mesh, x, i);
+        }
+
+        // 2. Pre-aggregate Q_U = sum_{a in U} A_a D_f delta f(a).
+        std::vector<Eigen::Matrix3d> Q(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Matrix3d::Zero());
         for (int i = bvh.n_nodes() - 1; i >= 0; --i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
-                Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+                Eigen::Matrix3d sum = Eigen::Matrix3d::Zero();
                 for (int j = node.face_start; j < node.face_end; ++j) {
                     int f = bvh.face_indices[j];
                     sum += g.A(f) * grad_face[static_cast<size_t>(f)];
@@ -250,15 +368,16 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             }
         }
 
-        // B_0 scalar aggregate Q0_U = sum_{a in U} A_a x_a.
-        std::vector<double> Q0(static_cast<size_t>(bvh.n_nodes()), 0.0);
+        // B_0 vector aggregate Q0_U = sum_{a in U} A_a x_a.
+        std::vector<Eigen::Vector3d> Q0(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
         for (int i = bvh.n_nodes() - 1; i >= 0; --i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
-                double sum = 0.0;
+                Eigen::Vector3d sum = Eigen::Vector3d::Zero();
                 for (int j = node.face_start; j < node.face_end; ++j) {
                     int f = bvh.face_indices[j];
-                    sum += g.A(f) * face_x(f);
+                    sum += g.A(f) * face_x[static_cast<size_t>(f)];
                 }
                 Q0[static_cast<size_t>(i)] = sum;
             } else {
@@ -273,10 +392,11 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
         // B_0 symmetrizes the asymmetric projector kernel explicitly as
         // K(S,T)+K(T,S), so it does not get an additional factor 2.
         std::vector<double> SumA(bvh.n_nodes(), 0.0);
-        std::vector<Eigen::Vector3d> SumQ(
-            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
+        std::vector<Eigen::Matrix3d> SumQ(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Matrix3d::Zero());
         std::vector<double> SumA0(bvh.n_nodes(), 0.0);
-        std::vector<double> SumQ0(bvh.n_nodes(), 0.0);
+        std::vector<Eigen::Vector3d> SumQ0(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
         for (const auto& cp : bp.admissible) {
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
@@ -308,9 +428,10 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             }
         }
 
-        std::vector<Eigen::Vector3d> face_dual(
+        std::vector<Eigen::Matrix3d> face_dual(
+            static_cast<size_t>(nf), Eigen::Matrix3d::Zero());
+        std::vector<Eigen::Vector3d> face_dual0(
             static_cast<size_t>(nf), Eigen::Vector3d::Zero());
-        Eigen::VectorXd face_dual0 = Eigen::VectorXd::Zero(nf);
         for (int i = 0; i < bvh.n_nodes(); ++i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
@@ -319,8 +440,9 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                     face_dual[static_cast<size_t>(f)] +=
                         2.0 * g.A(f) *
                         (grad_face[static_cast<size_t>(f)] * SumA[i] - SumQ[i]);
-                    face_dual0(f) +=
-                        g.A(f) * (face_x(f) * SumA0[i] - SumQ0[i]);
+                    face_dual0[static_cast<size_t>(f)] +=
+                        g.A(f) *
+                        (face_x[static_cast<size_t>(f)] * SumA0[i] - SumQ0[i]);
                 }
             }
         }
@@ -344,25 +466,28 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                          grad_face[static_cast<size_t>(b)]);
 
                     const double K0 = b0_kernel_sym_faces(g, a, b, power);
-                    face_dual0(a) +=
-                        g.A(a) * g.A(b) * K0 * (face_x(a) - face_x(b));
+                    face_dual0[static_cast<size_t>(a)] +=
+                        g.A(a) * g.A(b) * K0 *
+                        (face_x[static_cast<size_t>(a)] -
+                         face_x[static_cast<size_t>(b)]);
                 }
             }
         }
 
         // 4. Combine: y = sigma * (B x + B_0 x).
-        Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
+        Eigen::MatrixXd y = Eigen::MatrixXd::Zero(nv, 3);
         for (int f = 0; f < nf; ++f) {
-            scatter_face_gradient_adjoint(
+            scatter_face_matrix_adjoint(
                 mesh,
                 g,
                 f,
                 params.sigma * face_dual[static_cast<size_t>(f)],
                 y);
-            const double b0_vertex = params.sigma * face_dual0(f) / 3.0;
-            y(mesh.F(f, 0)) += b0_vertex;
-            y(mesh.F(f, 1)) += b0_vertex;
-            y(mesh.F(f, 2)) += b0_vertex;
+            const Eigen::Vector3d b0_vertex =
+                params.sigma * face_dual0[static_cast<size_t>(f)] / 3.0;
+            y.row(mesh.F(f, 0)) += b0_vertex.transpose();
+            y.row(mesh.F(f, 1)) += b0_vertex.transpose();
+            y.row(mesh.F(f, 2)) += b0_vertex.transpose();
         }
 
         return y;
@@ -494,6 +619,65 @@ enum class HsConstantProjectionMode {
     None
 };
 
+void project_constant_mode_general(const HsOperators &hs,
+                                   HsConstantProjectionMode mode,
+                                   Eigen::VectorXd &x) {
+    if (mode == HsConstantProjectionMode::None || x.size() == 0) {
+        return;
+    }
+    if (!is_flat_vector_field(hs, x)) {
+        if (mode == HsConstantProjectionMode::MassWeighted) {
+            project_mass_constant_mode(hs, x);
+        } else {
+            project_constant_mode(x);
+        }
+        return;
+    }
+
+    Eigen::MatrixXd field = unflatten_vertex_field(x, hs.mass_diag.size());
+    for (int c = 0; c < 3; ++c) {
+        Eigen::VectorXd col = field.col(c);
+        if (mode == HsConstantProjectionMode::MassWeighted) {
+            project_mass_constant_mode(hs, col);
+        } else {
+            project_constant_mode(col);
+        }
+        field.col(c) = col;
+    }
+    x = flatten_vertex_field(field);
+}
+
+Eigen::VectorXd solve_laplacian_general(
+    const HsOperators &hs,
+    const Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> &factor,
+    const Eigen::VectorXd &rhs) {
+    if (!is_flat_vector_field(hs, rhs)) {
+        return factor.solve(rhs);
+    }
+
+    Eigen::MatrixXd rhs_field = unflatten_vertex_field(rhs, hs.mass_diag.size());
+    Eigen::MatrixXd out(rhs_field.rows(), 3);
+    for (int c = 0; c < 3; ++c) {
+        out.col(c) = factor.solve(rhs_field.col(c));
+    }
+    return flatten_vertex_field(out);
+}
+
+Eigen::VectorXd apply_middle_general(const HsOperators &hs,
+                                     const ScalarFractionalLaplacian &middle,
+                                     const Eigen::VectorXd &x) {
+    if (!is_flat_vector_field(hs, x)) {
+        return middle.apply(x);
+    }
+
+    Eigen::MatrixXd field = unflatten_vertex_field(x, hs.mass_diag.size());
+    Eigen::MatrixXd out(field.rows(), 3);
+    for (int c = 0; c < 3; ++c) {
+        out.col(c) = middle.apply(field.col(c));
+    }
+    return flatten_vertex_field(out);
+}
+
 struct HsSandwichPreconditioner {
     const HsOperators& hs;
     const ScalarFractionalLaplacian& middle;
@@ -521,23 +705,18 @@ struct HsSandwichPreconditioner {
     }
 
     void project(Eigen::VectorXd &x) const {
-        if (projection_mode == HsConstantProjectionMode::None) return;
-        if (projection_mode == HsConstantProjectionMode::MassWeighted) {
-            project_mass_constant_mode(hs, x);
-        } else {
-            project_constant_mode(x);
-        }
+        project_constant_mode_general(hs, projection_mode, x);
     }
 
     Eigen::VectorXd laplace_inverse(Eigen::VectorXd rhs) const {
         if (inverse_mode == HsLaplacianInverseMode::LaplaceBeltrami) {
-            rhs = apply_lumped_mass(hs, rhs);
+            rhs = apply_lumped_mass_general(hs, rhs);
         }
         // The lifted factor can solve a nonzero-sum RHS, but projecting the
         // RHS keeps the solve aligned with the cotan nullspace we intend to
         // quotient out.
         project(rhs);
-        Eigen::VectorXd out = laplacian_factor.solve(rhs);
+        Eigen::VectorXd out = solve_laplacian_general(hs, laplacian_factor, rhs);
         project(out);
         return out;
     }
@@ -554,7 +733,7 @@ struct HsSandwichPreconditioner {
 
         Eigen::VectorXd w1 = laplace_inverse(rhs);
 
-        Eigen::VectorXd w2 = middle.apply(w1);
+        Eigen::VectorXd w2 = apply_middle_general(hs, middle, w1);
         project(w2);
 
         Eigen::VectorXd out = laplace_inverse(w2);
@@ -760,16 +939,20 @@ HsDirectionResult hs_preconditioned_direction(
 
     HsOperator op(mesh, params, hs, g, bvh, bp);
     ScalarFractionalLaplacian middle(mesh, g, bvh, bp, 2.0 - params.s);
-    HsSandwichPreconditioner sandwich(hs, middle);
+    HsSandwichPreconditioner sandwich(
+        hs,
+        middle,
+        HsLaplacianInverseMode::H1Metric,
+        HsConstantProjectionMode::None);
     if (sandwich.info() != Eigen::Success) {
         throw std::runtime_error(
             "hs_preconditioned_direction: lifted cotan factorization failed");
     }
 
-    HsRightPreconditionedOperator right_op(op, sandwich);
-    Eigen::GMRES<HsRightPreconditionedOperator, Eigen::IdentityPreconditioner> gmres;
-    gmres.compute(right_op);
-    gmres.setTolerance(1e-6);
+    HsLeftPreconditionedOperator left_op(op, sandwich);
+    Eigen::GMRES<HsLeftPreconditionedOperator, Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(left_op);
+    gmres.setTolerance(1e-5);
     gmres.setMaxIterations(100);
 
     HsDirectionResult out;
@@ -778,26 +961,14 @@ HsDirectionResult hs_preconditioned_direction(
     out.max_gmres_error = 0.0;
     out.used_identity_fallback = false;
 
-    for (int j = 0; j < 3; ++j) {
-        Eigen::VectorXd g_col = gradient.col(j);
-        sandwich.project(g_col);
-
-        const Eigen::VectorXd z_col = gmres.solve(g_col);
-        out.direction.col(j) = sandwich.solve(z_col);
-        out.max_gmres_iterations =
-            std::max(out.max_gmres_iterations,
-                     static_cast<int>(gmres.iterations()));
-        out.max_gmres_error = std::max(out.max_gmres_error, gmres.error());
-
-        if (gmres.info() != Eigen::Success) {
-            // Fallback or warning could be added here
-        }
-
-        // Project out the chosen constant mode of A.
-        Eigen::VectorXd d_col = out.direction.col(j);
-        sandwich.project(d_col);
-        out.direction.col(j) = d_col;
-    }
+    Eigen::VectorXd g_flat = flatten_vertex_field(gradient);
+    sandwich.project(g_flat);
+    const Eigen::VectorXd rhs_left = sandwich.solve(g_flat);
+    Eigen::VectorXd d_flat = gmres.solve(rhs_left);
+    sandwich.project(d_flat);
+    out.direction = unflatten_vertex_field(d_flat, nv);
+    out.max_gmres_iterations = static_cast<int>(gmres.iterations());
+    out.max_gmres_error = gmres.error();
 
     auto compute_g_dot_dir = [&]() {
         return (gradient.array() * out.direction.array()).sum();
@@ -826,20 +997,13 @@ HsDirectionResult hs_preconditioned_direction(
         out.max_gmres_error = 0.0;
         out.used_identity_fallback = true;
 
-        for (int j = 0; j < 3; ++j) {
-            Eigen::VectorXd g_col = gradient.col(j);
-            sandwich.project(g_col);
-
-            Eigen::VectorXd d_col = identity_gmres.solve(g_col);
-            sandwich.project(d_col);
-            out.direction.col(j) = d_col;
-
-            out.max_gmres_iterations =
-                std::max(out.max_gmres_iterations,
-                         static_cast<int>(identity_gmres.iterations()));
-            out.max_gmres_error =
-                std::max(out.max_gmres_error, identity_gmres.error());
-        }
+        Eigen::VectorXd rhs_flat = flatten_vertex_field(gradient);
+        sandwich.project(rhs_flat);
+        Eigen::VectorXd fallback_flat = identity_gmres.solve(rhs_flat);
+        sandwich.project(fallback_flat);
+        out.direction = unflatten_vertex_field(fallback_flat, nv);
+        out.max_gmres_iterations = static_cast<int>(identity_gmres.iterations());
+        out.max_gmres_error = identity_gmres.error();
 
         if (!out.direction.allFinite()) {
             throw std::runtime_error(
