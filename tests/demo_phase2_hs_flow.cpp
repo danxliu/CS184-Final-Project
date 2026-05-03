@@ -30,6 +30,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 using rsh::MeshData;
@@ -40,6 +41,41 @@ std::string frame_path(const std::string &dir, int idx) {
     std::ostringstream oss;
     oss << dir << "/frame_" << std::setfill('0') << std::setw(4) << idx << ".obj";
     return oss.str();
+}
+
+void remove_stale_frames(const std::string &dir) {
+    if (!std::filesystem::exists(dir)) return;
+    for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("frame_", 0) == 0 && entry.path().extension() == ".obj") {
+            std::filesystem::remove(entry.path());
+        }
+    }
+}
+
+double parse_initial_tau(int argc, char **argv) {
+    double initial_tau = 1.0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--initial-tau" || arg == "--tau0") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(arg + " requires a numeric value");
+            }
+            initial_tau = std::stod(argv[++i]);
+        } else if (arg.rfind("--initial-tau=", 0) == 0) {
+            initial_tau = std::stod(arg.substr(std::string("--initial-tau=").size()));
+        } else if (arg.rfind("--tau0=", 0) == 0) {
+            initial_tau = std::stod(arg.substr(std::string("--tau0=").size()));
+        } else {
+            throw std::runtime_error("unknown argument: " + arg);
+        }
+    }
+
+    if (!std::isfinite(initial_tau) || initial_tau <= 0.0) {
+        throw std::runtime_error("--initial-tau must be positive and finite");
+    }
+    return initial_tau;
 }
 
 void remove_scale_mode(const Eigen::MatrixXd &V, Eigen::MatrixXd &G) {
@@ -60,7 +96,7 @@ void scale_axes(MeshData &m, double sx, double sy, double sz) {
 
 } // namespace
 
-int main(int /*argc*/, char ** /*argv*/) {
+int main(int argc, char **argv) {
     const int ico_subdiv = 2;
     const double sx = 1.7, sy = 0.75, sz = 0.75;
     const double alpha = 6.0;
@@ -75,9 +111,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     const double grad_tol = 1e-6;
     const double rel_progress_tol = 1e-6;
     const int stall_window = 5;
+    const double initial_tau = parse_initial_tau(argc, argv);
 
     const std::string out_dir = "out/phase2_hs_flow";
     std::filesystem::create_directories(out_dir);
+    remove_stale_frames(out_dir);
 
     MeshData m = rsh::make_icosphere(ico_subdiv);
     scale_axes(m, sx, sy, sz);
@@ -97,6 +135,7 @@ int main(int /*argc*/, char ** /*argv*/) {
               << "  s = " << hs_s << ", alpha = " << alpha << ", theta = " << theta << "\n"
               << "  hs_sigma = " << hs_sigma
               << ", hs_mass_weight = " << hs_mass_weight << "\n"
+              << "  initial Armijo trial tau = " << initial_tau << "\n"
               << "  initial bbox extents: (" << ext0(0) << ", "
               << ext0(1) << ", " << ext0(2) << ")\n"
               << "  round sphere target:  (0.5774, 0.5774, 0.5774)\n"
@@ -108,7 +147,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     m.save_obj(frame_path(out_dir, 0));
 
     const rsh::HsPreconditionerParams hs_params{hs_s, hs_sigma, hs_mass_weight};
-    double tau = 1.0;
+    double tau = initial_tau;
     double E_stall_ref = std::numeric_limits<double>::infinity();
     int stall_ref_iter = -stall_window;
 
@@ -130,7 +169,7 @@ int main(int /*argc*/, char ** /*argv*/) {
         }
 
         const rsh::HsDirectionResult hs = rsh::hs_preconditioned_direction(m, G, hs_params);
-        tau = std::min(tau * 2.0, 1.0);
+        tau = std::min(tau * 2.0, initial_tau);
         int n_bt = 0;
         MeshData m_try = m;
         rsh::BVH bvh_try = bvh;

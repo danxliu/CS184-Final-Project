@@ -92,6 +92,9 @@ target_link_libraries(demo_phase1_flow PRIVATE rsh_core)
 add_executable(demo_phase2_hs_flow tests/demo_phase2_hs_flow.cpp)
 target_link_libraries(demo_phase2_hs_flow PRIVATE rsh_core)
 
+add_executable(demo_canonical_genus0 tests/demo_canonical_genus0.cpp)
+target_link_libraries(demo_canonical_genus0 PRIVATE rsh_core)
+
 # add_executable(demo_interpolation tests/demo_interpolation.cpp)
 # target_link_libraries(demo_interpolation PRIVATE rsh_core)
 

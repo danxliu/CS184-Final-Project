@@ -17,6 +17,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,59 @@ std::string frame_path(const std::string &dir, int idx) {
     std::ostringstream oss;
     oss << dir << "/frame_" << std::setfill('0') << std::setw(4) << idx << ".obj";
     return oss.str();
+}
+
+std::string partial_frame_path(const std::string &dir, int frame) {
+    std::ostringstream oss;
+    oss << dir << "/partial_frame_" << std::setfill('0') << std::setw(4)
+        << frame << ".obj";
+    return oss.str();
+}
+
+void remove_stale_frames(const std::string &dir) {
+    if (!std::filesystem::exists(dir)) return;
+    for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string name = entry.path().filename().string();
+        if ((name.rfind("frame_", 0) == 0 ||
+             name.rfind("partial_frame_", 0) == 0) &&
+            entry.path().extension() == ".obj") {
+            std::filesystem::remove(entry.path());
+        }
+    }
+}
+
+struct CliOptions {
+    double initial_tau = 1.0;
+    std::vector<std::string> mesh_paths;
+};
+
+CliOptions parse_cli(int argc, char **argv) {
+    CliOptions out;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--initial-tau" || arg == "--tau0") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(arg + " requires a numeric value");
+            }
+            out.initial_tau = std::stod(argv[++i]);
+        } else if (arg.rfind("--initial-tau=", 0) == 0) {
+            out.initial_tau = std::stod(arg.substr(std::string("--initial-tau=").size()));
+        } else if (arg.rfind("--tau0=", 0) == 0) {
+            out.initial_tau = std::stod(arg.substr(std::string("--tau0=").size()));
+        } else {
+            out.mesh_paths.push_back(arg);
+        }
+    }
+
+    if (!std::isfinite(out.initial_tau) || out.initial_tau <= 0.0) {
+        throw std::runtime_error("--initial-tau must be positive and finite");
+    }
+    if (!out.mesh_paths.empty() && out.mesh_paths.size() != 2) {
+        throw std::runtime_error(
+            "expected either zero mesh paths or exactly two mesh paths");
+    }
+    return out;
 }
 
 MeshData combine_meshes(const MeshData &m1, const MeshData &m2) {
@@ -51,12 +105,14 @@ MeshData combine_meshes(const MeshData &m1, const MeshData &m2) {
 } // namespace
 
 int main(int argc, char **argv) {
+    const CliOptions cli = parse_cli(argc, argv);
     MeshData m_left, m_right;
 
-    if (argc == 3) {
-        std::cout << "Loading custom meshes: " << argv[1] << " and " << argv[2] << "\n";
-        m_left = rsh::MeshData::load_obj(argv[1]);
-        m_right = rsh::MeshData::load_obj(argv[2]);
+    if (cli.mesh_paths.size() == 2) {
+        std::cout << "Loading custom meshes: " << cli.mesh_paths[0]
+                  << " and " << cli.mesh_paths[1] << "\n";
+        m_left = rsh::MeshData::load_obj(cli.mesh_paths[0]);
+        m_right = rsh::MeshData::load_obj(cli.mesh_paths[1]);
     } else {
         std::cout << "Using default icosphere(2) meshes.\n";
         m_left = rsh::make_icosphere(2);
@@ -143,11 +199,18 @@ int main(int argc, char **argv) {
 
     const std::string out_dir = "out/compress_sequence";
     std::filesystem::create_directories(out_dir);
+    remove_stale_frames(out_dir);
 
     MeshData m_curr = m_ref;
     m_curr.save_obj(frame_path(out_dir, 0));
 
-    std::cout << "Starting compression simulation...\n";
+    std::ofstream csv(out_dir + "/energy.csv");
+    csv << "frame,inner,energy,tpe_energy_weighted,shell_energy,grad_norm,step_size,n_backtracks,g_dot_dir,used_identity_fallback\n";
+    std::ofstream frame_csv(out_dir + "/frame_summary.csv");
+    frame_csv << "frame,status,initial_energy,final_energy,accepted_steps,safeguard_fallbacks,total_backtracks\n";
+
+    std::cout << "Starting compression simulation...\n"
+              << "Initial Armijo trial tau: " << cli.initial_tau << "\n";
 
     for (int frame = 1; frame <= num_frames; ++frame) {
         std::cout << "\n--- Frame " << frame << " ---\n";
@@ -162,7 +225,13 @@ int main(int argc, char **argv) {
         }
 
         // 2. Relax free vertices
-        double tau = 1.0;
+        double tau = cli.initial_tau;
+        double frame_initial_energy = std::numeric_limits<double>::quiet_NaN();
+        double frame_final_energy = std::numeric_limits<double>::quiet_NaN();
+        int frame_fallbacks = 0;
+        int frame_backtracks = 0;
+        int accepted_steps = 0;
+        std::string frame_status = "max_iters";
         
         for (int it = 0; it < max_inner_iters; ++it) {
             // Compute TPE
@@ -178,6 +247,10 @@ int main(int argc, char **argv) {
             
             double E_total = tpe_weight * E_tpe + shell_res.energy.total;
             Eigen::MatrixXd G_total = tpe_weight * G_tpe + shell_res.grad_def;
+            if (it == 0) {
+                frame_initial_energy = E_total;
+            }
+            frame_final_energy = E_total;
 
             // Zero out gradient on handles
             for (int i = 0; i < m_curr.n_vertices(); ++i) {
@@ -187,14 +260,28 @@ int main(int argc, char **argv) {
             }
 
             double gnorm = G_total.norm();
+            if (it == 0) {
+                std::cout << "  initial inner energy = " << E_total
+                          << " (TPE=" << (tpe_weight * E_tpe)
+                          << ", Shell=" << shell_res.energy.total
+                          << "), |g| = " << gnorm << "\n";
+                csv << frame << ",-1," << E_total << ","
+                    << (tpe_weight * E_tpe) << "," << shell_res.energy.total
+                    << "," << gnorm << ",0,0,0,0\n";
+                csv.flush();
+            }
             if (gnorm < grad_tol) {
                 std::cout << "  [Inner " << it << "] converged! gnorm = " << gnorm << "\n";
+                frame_status = "grad_tol";
                 break;
             }
 
             // Direction
             rsh::HsDirectionResult hs_res = rsh::hs_preconditioned_direction(m_curr, G_total, hs_params);
             Eigen::MatrixXd dir = hs_res.direction;
+            if (hs_res.used_identity_fallback) {
+                ++frame_fallbacks;
+            }
 
             // Zero out direction on handles
             for (int i = 0; i < m_curr.n_vertices(); ++i) {
@@ -204,7 +291,7 @@ int main(int argc, char **argv) {
             }
 
             // Backtracking
-            tau = std::min(tau * 2.0, 1.0);
+            tau = std::min(tau * 2.0, cli.initial_tau);
             int n_bt = 0;
             MeshData m_try = m_curr;
             rsh::BVH bvh_try = bvh;
@@ -229,15 +316,37 @@ int main(int argc, char **argv) {
 
             if (n_bt == max_backtracks) {
                 std::cout << "  [Inner " << it << "] Armijo failed, gnorm = " << gnorm << "\n";
+                frame_status = "armijo_failed";
                 break; // proceed to next frame
             }
 
             m_curr = m_try;
+            m_curr.save_obj(partial_frame_path(out_dir, frame));
+            frame_final_energy = E_new;
+            frame_backtracks += n_bt;
+            ++accepted_steps;
             std::printf("  [Inner %2d] E = %.4e (TPE=%.4e, Shell=%.4e) |g| = %.2e tau = %.2e bt = %d\n",
                         it, E_new, tpe_weight * E_tpe, shell_res.energy.total, gnorm, tau, n_bt);
+            csv << frame << "," << it << "," << E_new << ","
+                << (tpe_weight * E_tpe) << "," << shell_res.energy.total
+                << "," << gnorm << "," << tau << "," << n_bt << ","
+                << hs_res.g_dot_dir << ","
+                << (hs_res.used_identity_fallback ? 1 : 0) << "\n";
+            csv.flush();
         }
 
         m_curr.save_obj(frame_path(out_dir, frame));
+        frame_csv << frame << "," << frame_status << ","
+                  << frame_initial_energy << "," << frame_final_energy << ","
+                  << accepted_steps << "," << frame_fallbacks << ","
+                  << frame_backtracks << "\n";
+        frame_csv.flush();
+        std::cout << "Frame " << frame << " summary: status=" << frame_status
+                  << ", initial_E=" << frame_initial_energy
+                  << ", final_E=" << frame_final_energy
+                  << ", accepted_steps=" << accepted_steps
+                  << ", fallbacks=" << frame_fallbacks
+                  << ", total_backtracks=" << frame_backtracks << "\n";
     }
 
     std::cout << "\nCompression demo complete. Output saved to " << out_dir << "/\n";
