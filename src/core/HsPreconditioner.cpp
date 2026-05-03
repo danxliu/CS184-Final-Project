@@ -98,11 +98,50 @@ void scatter_face_gradient_adjoint(const MeshData &mesh,
     y(i2) += face_dual.dot(inv_2a * n.cross(E2));
 }
 
+double face_average(const MeshData &mesh,
+                    const Eigen::VectorXd &x,
+                    int f) {
+    return (x(mesh.F(f, 0)) +
+            x(mesh.F(f, 1)) +
+            x(mesh.F(f, 2))) / 3.0;
+}
+
+double b0_kernel_sym_faces(const FaceGeom &g,
+                           int a,
+                           int b,
+                           double s) {
+    const Eigen::Vector3d e = g.C.row(a) - g.C.row(b);
+    const double r2 = e.squaredNorm();
+    if (r2 == 0.0) return 0.0;
+
+    const Eigen::Vector3d na = g.N.row(a).transpose();
+    const Eigen::Vector3d nb = g.N.row(b).transpose();
+    const double pa = na.dot(e);
+    const double pb = nb.dot(-e);
+    return (pa * pa + pb * pb) / std::pow(r2, s + 2.0);
+}
+
+double b0_kernel_sym_clusters(const BVHNode &U,
+                              const BVHNode &V,
+                              double s) {
+    if (U.area <= 0.0 || V.area <= 0.0) return 0.0;
+
+    const Eigen::Vector3d e = U.centroid - V.centroid;
+    const double r2 = e.squaredNorm();
+    if (r2 == 0.0) return 0.0;
+
+    const Eigen::Vector3d nU = U.normal_sum / U.area;
+    const Eigen::Vector3d nV = V.normal_sum / V.area;
+    const double pU = nU.dot(e);
+    const double pV = nV.dot(-e);
+    return (pU * pU + pV * pV) / std::pow(r2, s + 2.0);
+}
+
 } // namespace
 
-// Matrix-free transitional operator for A = mass_weight * M + sigma * B.
-// B is the high-order term from RSu Eq. 7 / Eq. 12. The mass term is a
-// temporary regularizer; TODO 2B.2 replace it with the proper B_0 term.
+// Matrix-free operator for A = sigma * (B + B_0), where B is the
+// gradient-based high-order term from RSu Eq. 7 / Eq. 12 and B_0 is the
+// low-order TPE-modulated term from RSu Eq. 8.
 struct HsOperator : public Eigen::EigenBase<HsOperator> {
     const MeshData& mesh;
     const HsPreconditionerParams& params;
@@ -134,11 +173,13 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
         const int nf = mesh.n_faces();
         const double power = params.s;
 
-        // 1. Per-face gradients D_f x from RSu Sec. 3.2.1.
+        // 1. Per-face gradients D_f x for B and face barycenter values for B_0.
         std::vector<Eigen::Vector3d> grad_face(static_cast<size_t>(nf));
+        Eigen::VectorXd face_x(nf);
         for (int i = 0; i < nf; ++i) {
             grad_face[static_cast<size_t>(i)] =
                 face_scalar_gradient(mesh, g, x, i);
+            face_x(i) = face_average(mesh, x, i);
         }
 
         // 2. Pre-aggregate Q_U = sum_{a in U} A_a D_f x(a).
@@ -158,12 +199,33 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             }
         }
 
-        // 3. Hierarchical integral for high-order B. The BCT enumerates
-        // ordered face pairs, so each directed contribution carries the
-        // factor 2 from the ordered quadratic form's adjoint.
+        // B_0 scalar aggregate Q0_U = sum_{a in U} A_a x_a.
+        std::vector<double> Q0(static_cast<size_t>(bvh.n_nodes()), 0.0);
+        for (int i = bvh.n_nodes() - 1; i >= 0; --i) {
+            const BVHNode& node = bvh.nodes[i];
+            if (node.is_leaf()) {
+                double sum = 0.0;
+                for (int j = node.face_start; j < node.face_end; ++j) {
+                    int f = bvh.face_indices[j];
+                    sum += g.A(f) * face_x(f);
+                }
+                Q0[static_cast<size_t>(i)] = sum;
+            } else {
+                Q0[static_cast<size_t>(i)] =
+                    Q0[static_cast<size_t>(node.left)] +
+                    Q0[static_cast<size_t>(node.right)];
+            }
+        }
+
+        // 3. Hierarchical integrals. The BCT enumerates ordered face pairs.
+        // B has a symmetric kernel, so the directed target gets the factor 2.
+        // B_0 symmetrizes the asymmetric projector kernel explicitly as
+        // K(S,T)+K(T,S), so it does not get an additional factor 2.
         std::vector<double> SumA(bvh.n_nodes(), 0.0);
         std::vector<Eigen::Vector3d> SumQ(
             static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
+        std::vector<double> SumA0(bvh.n_nodes(), 0.0);
+        std::vector<double> SumQ0(bvh.n_nodes(), 0.0);
         for (const auto& cp : bp.admissible) {
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
@@ -174,21 +236,30 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             // Interaction U <- V (covers directed pair)
             SumA[cp.u] += K * V.area;
             SumQ[cp.u] += K * Q[cp.v];
+
+            const double K0 = b0_kernel_sym_clusters(U, V, power);
+            SumA0[cp.u] += K0 * V.area;
+            SumQ0[cp.u] += K0 * Q0[static_cast<size_t>(cp.v)];
         }
 
-        // Propagate SumA/SumQ down the tree
+        // Propagate cluster sums down the tree.
         for (int i = 0; i < bvh.n_nodes(); ++i) {
             const BVHNode& node = bvh.nodes[i];
             if (!node.is_leaf()) {
                 SumA[node.left] += SumA[i];
                 SumQ[node.left] += SumQ[i];
+                SumA0[node.left] += SumA0[i];
+                SumQ0[node.left] += SumQ0[i];
                 SumA[node.right] += SumA[i];
                 SumQ[node.right] += SumQ[i];
+                SumA0[node.right] += SumA0[i];
+                SumQ0[node.right] += SumQ0[i];
             }
         }
 
         std::vector<Eigen::Vector3d> face_dual(
             static_cast<size_t>(nf), Eigen::Vector3d::Zero());
+        Eigen::VectorXd face_dual0 = Eigen::VectorXd::Zero(nf);
         for (int i = 0; i < bvh.n_nodes(); ++i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
@@ -197,6 +268,8 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                     face_dual[static_cast<size_t>(f)] +=
                         2.0 * g.A(f) *
                         (grad_face[static_cast<size_t>(f)] * SumA[i] - SumQ[i]);
+                    face_dual0(f) +=
+                        g.A(f) * (face_x(f) * SumA0[i] - SumQ0[i]);
                 }
             }
         }
@@ -218,16 +291,16 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                         2.0 * g.A(a) * g.A(b) * K *
                         (grad_face[static_cast<size_t>(a)] -
                          grad_face[static_cast<size_t>(b)]);
+
+                    const double K0 = b0_kernel_sym_faces(g, a, b, power);
+                    face_dual0(a) +=
+                        g.A(a) * g.A(b) * K0 * (face_x(a) - face_x(b));
                 }
             }
         }
 
-        // 4. Combine: y = mass_weight * M x + sigma * B x.
+        // 4. Combine: y = sigma * (B x + B_0 x).
         Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
-        for (int i = 0; i < nv; ++i) {
-            y(i) = params.mass_weight * hs.mass_diag(i) * x(i);
-        }
-
         for (int f = 0; f < nf; ++f) {
             scatter_face_gradient_adjoint(
                 mesh,
@@ -235,6 +308,10 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                 f,
                 params.sigma * face_dual[static_cast<size_t>(f)],
                 y);
+            const double b0_vertex = params.sigma * face_dual0(f) / 3.0;
+            y(mesh.F(f, 0)) += b0_vertex;
+            y(mesh.F(f, 1)) += b0_vertex;
+            y(mesh.F(f, 2)) += b0_vertex;
         }
 
         return y;
@@ -332,9 +409,9 @@ HsDirectionResult hs_preconditioned_direction(
         throw std::runtime_error(
             "hs_preconditioned_direction: sigma must be non-negative");
     }
-    if (params.mass_weight <= 0.0) {
+    if (params.mass_weight < 0.0) {
         throw std::runtime_error(
-            "hs_preconditioned_direction: mass_weight must be positive");
+            "hs_preconditioned_direction: mass_weight must be non-negative");
     }
 
     const HsOperators hs = build_hs_operators(mesh);

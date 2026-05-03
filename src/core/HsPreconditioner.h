@@ -17,7 +17,10 @@ struct HsOperators {
 struct HsPreconditionerParams {
     double s = 1.0;
     double sigma = 1.0;
-    double mass_weight = 1.0;
+    // Deprecated compatibility knob. Unit 2B.2 replaces the old mass
+    // regularizer with the paper's B_0 term; this value is validated but not
+    // applied in HsOperator.
+    double mass_weight = 0.0;
 };
 
 struct HsDirectionResult {

@@ -1,4 +1,5 @@
-// Validation for the high-order H^s operator B in HsPreconditioner.cpp.
+// Validation for the paper-faithful H^s operator A = B + B_0 in
+// HsPreconditioner.cpp.
 // The test includes the implementation file so it can exercise the internal
 // matrix-free HsOperator without making that type public API.
 //
@@ -9,8 +10,10 @@
 //
 // where RSu Sec. 2.4 sets sigma = s - 1 for the gradient-elevated
 // high-order term. On a surface, the distance exponent is therefore
-// 2(s - 1) + 2 = 2s. This test uses the same ordered face-pair convention as
-// the Phase 1 TPE code and validates the matvec through v^T (B u).
+// 2(s - 1) + 2 = 2s. Eq. 8 adds the low-order term B_0 by multiplying
+// face-value differences by the asymmetric p=2 TPE kernel k_{f,2}. This test
+// uses the same ordered face-pair convention as the Phase 1 TPE code and
+// validates the matvec through v^T (A u).
 
 #include <Eigen/Dense>
 
@@ -123,6 +126,29 @@ Eigen::VectorXd apply_hs_operator(const rsh::MeshData &mesh,
     return op * u;
 }
 
+double face_value(const rsh::MeshData &mesh,
+                  const Eigen::VectorXd &u,
+                  int f) {
+    return (u(mesh.F(f, 0)) +
+            u(mesh.F(f, 1)) +
+            u(mesh.F(f, 2))) / 3.0;
+}
+
+double b0_kernel_sym_faces(const rsh::FaceGeom &g,
+                           int a,
+                           int b,
+                           double s) {
+    const Eigen::Vector3d e = g.C.row(a) - g.C.row(b);
+    const double r2 = e.squaredNorm();
+    if (r2 == 0.0) return 0.0;
+
+    const Eigen::Vector3d na = g.N.row(a).transpose();
+    const Eigen::Vector3d nb = g.N.row(b).transpose();
+    const double pa = na.dot(e);
+    const double pb = nb.dot(-e);
+    return (pa * pa + pb * pb) / std::pow(r2, s + 2.0);
+}
+
 Eigen::VectorXd brute_high_order_b(const rsh::MeshData &mesh,
                                    const Eigen::VectorXd &u,
                                    double s) {
@@ -154,6 +180,43 @@ Eigen::VectorXd brute_high_order_b(const rsh::MeshData &mesh,
         scatter_face_adjoint(mesh, g, f, dual[static_cast<size_t>(f)], y);
     }
     return y;
+}
+
+Eigen::VectorXd brute_low_order_b0(const rsh::MeshData &mesh,
+                                   const Eigen::VectorXd &u,
+                                   double s) {
+    const int nf = mesh.n_faces();
+    const int nv = mesh.n_vertices();
+    const rsh::FaceGeom g = rsh::compute_face_geom(mesh);
+
+    Eigen::VectorXd face_u(nf);
+    for (int f = 0; f < nf; ++f) {
+        face_u(f) = face_value(mesh, u, f);
+    }
+
+    Eigen::VectorXd dual = Eigen::VectorXd::Zero(nf);
+    for (int a = 0; a < nf; ++a) {
+        for (int b = 0; b < nf; ++b) {
+            if (a == b) continue;
+            const double K0 = b0_kernel_sym_faces(g, a, b, s);
+            dual(a) += g.A(a) * g.A(b) * K0 * (face_u(a) - face_u(b));
+        }
+    }
+
+    Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
+    for (int f = 0; f < nf; ++f) {
+        const double val = dual(f) / 3.0;
+        y(mesh.F(f, 0)) += val;
+        y(mesh.F(f, 1)) += val;
+        y(mesh.F(f, 2)) += val;
+    }
+    return y;
+}
+
+Eigen::VectorXd brute_operator_a(const rsh::MeshData &mesh,
+                                 const Eigen::VectorXd &u,
+                                 double s) {
+    return brute_high_order_b(mesh, u, s) + brute_low_order_b0(mesh, u, s);
 }
 
 double slope_log_log(const std::vector<double> &x,
@@ -237,8 +300,73 @@ void test_distance_sweep() {
           "distance sweep identifies exponent -2s");
 }
 
+void test_b0_two_triangle_hand_case() {
+    std::cout << "-- 2-triangle hand-computed low-order B_0 --\n";
+    const double s = 5.0 / 3.0;
+    const double d = 4.0;
+    const rsh::MeshData mesh = make_parallel_triangles(d);
+
+    // Both faces carry constant data, so Df u = 0 on each triangle and the
+    // high-order B term vanishes. Face 0 has u_S = 1, face 1 has u_T = 0.
+    //
+    // For the parallel stacked triangles, e = c_S - c_T = (0,0,-d),
+    // n_S = n_T = (0,0,1), area_S = area_T = 1/2. The symmetrized B_0 kernel is
+    //
+    //   K_0^sym(S,T)
+    //     = (|n_S.e|^2 + |n_T.(-e)|^2) / |e|^(2s+4)
+    //     = 2 d^2 / d^(2s+4)
+    //     = 2 / d^(2s+2).
+    //
+    // With the ordered face-pair convention used by the operator, the bilinear
+    // value for the two-face system is
+    //
+    //   <B_0 u,u> = area_S area_T K_0^sym (u_S-u_T)^2
+    //              = 0.5 / d^(2s+2).
+    Eigen::VectorXd u(6);
+    u << 1.0, 1.0, 1.0, 0.0, 0.0, 0.0;
+
+    const Eigen::VectorXd y = apply_hs_operator(mesh, u, s, 0.0);
+    const double actual = u.dot(y);
+    const double expected = 0.5 / std::pow(d, 2.0 * s + 2.0);
+    const double err = rel_err(actual, expected);
+
+    std::cout << "    d = " << d << "\n";
+    std::cout << "    actual <B_0 u,u>   = " << actual << "\n";
+    std::cout << "    expected <B_0 u,u> = " << expected << "\n";
+    std::cout << "    rel err            = " << err << "\n";
+    check(err < 1e-12, "operator matches the hand-computed Eq. 8 value");
+}
+
+void test_b0_distance_sweep() {
+    std::cout << "-- B_0 distance sweep for parallel-triangle exponent --\n";
+    const double s = 5.0 / 3.0;
+    std::vector<double> distances = {1.0, 2.0, 4.0, 8.0, 16.0};
+    std::vector<double> values;
+    values.reserve(distances.size());
+
+    std::cout << "    d, actual_<B_0 u,u>, expected\n";
+    for (double d : distances) {
+        const rsh::MeshData mesh = make_parallel_triangles(d);
+        Eigen::VectorXd u(6);
+        u << 1.0, 1.0, 1.0, 0.0, 0.0, 0.0;
+
+        const Eigen::VectorXd y = apply_hs_operator(mesh, u, s, 0.0);
+        const double actual = u.dot(y);
+        const double expected = 0.5 / std::pow(d, 2.0 * s + 2.0);
+        values.push_back(actual);
+        std::cout << "    " << d << ", " << actual << ", " << expected << "\n";
+        check(rel_err(actual, expected) < 1e-12,
+              "sweep value matches 0.5 / d^(2s+2)");
+    }
+
+    const double slope = slope_log_log(distances, values);
+    std::cout << "    slope log(<B_0 u,u>) vs log(d) = " << slope << "\n";
+    check(std::abs(slope + 2.0 * s + 2.0) < 1e-12,
+          "parallel-triangle sweep identifies effective exponent -(2s+2)");
+}
+
 void test_linearity() {
-    std::cout << "-- linearity on icosphere(2) --\n";
+    std::cout << "-- linearity of A = B + B_0 on icosphere(2) --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
     mesh.L0 = mesh.compute_L0();
     const double s = 5.0 / 3.0;
@@ -256,11 +384,11 @@ void test_linearity() {
 
     const double err = (lhs - rhs).norm() / std::max(1.0, rhs.norm());
     std::cout << "    relative linearity error = " << err << "\n";
-    check(err < 1e-12, "B(alpha*x + beta*y) == alpha*Bx + beta*By");
+    check(err < 1e-12, "A(alpha*x + beta*y) == alpha*Ax + beta*Ay");
 }
 
 void test_symmetry() {
-    std::cout << "-- symmetry proxy --\n";
+    std::cout << "-- symmetry proxy for A = B + B_0 --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
     mesh.L0 = mesh.compute_L0();
     const double s = 5.0 / 3.0;
@@ -274,37 +402,91 @@ void test_symmetry() {
         const double denom = std::max(1.0, std::max(std::abs(xBy), std::abs(yBx)));
         const double err = std::abs(xBy - yBx) / denom;
         const double gate = (theta == 0.0) ? 1e-12 : 1e-2;
-        std::cout << "    theta = " << theta << ", x^T B y = " << xBy
-                  << ", y^T B x = " << yBx << ", rel = " << err << "\n";
-        check(err < gate, "x^T B y ~= y^T B x");
+        std::cout << "    theta = " << theta << ", x^T A y = " << xBy
+                  << ", y^T A x = " << yBx << ", rel = " << err << "\n";
+        check(err < gate, "x^T A y ~= y^T A x");
     }
 }
 
 void test_brute_reference() {
-    std::cout << "-- theta=0 hierarchical matvec matches brute B --\n";
+    std::cout << "-- hierarchical matvec matches brute A at theta=0 --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
     mesh.L0 = mesh.compute_L0();
     const double s = 5.0 / 3.0;
     const Eigen::VectorXd x = deterministic_field(mesh.n_vertices(), 0.4);
 
     const Eigen::VectorXd fast = apply_hs_operator(mesh, x, s, 0.0);
-    const Eigen::VectorXd brute = brute_high_order_b(mesh, x, s);
+    const Eigen::VectorXd brute = brute_operator_a(mesh, x, s);
     const double err = (fast - brute).norm() / std::max(1.0, brute.norm());
     std::cout << "    relative ||fast - brute|| = " << err << "\n";
-    check(err < 1e-12, "theta=0 HsOperator matches O(n_f^2) brute B");
+    check(err < 1e-12, "theta=0 HsOperator matches O(n_f^2) brute A");
+
+    const double q_fast = x.dot(apply_hs_operator(mesh, x, s, 0.5));
+    const double q_brute = x.dot(brute);
+    const double ratio = q_fast / q_brute;
+    std::cout << "    theta=0.5 quadratic ratio vs brute = " << ratio << "\n";
+    check(std::isfinite(ratio), "theta=0.5 A ratio is finite");
+}
+
+void print_theta_sweep_for_mesh(const std::string &name,
+                                rsh::MeshData mesh,
+                                double phase) {
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const Eigen::VectorXd x = deterministic_field(mesh.n_vertices(), phase);
+    const Eigen::VectorXd brute = brute_operator_a(mesh, x, s);
+    const double q_brute = x.dot(brute);
+
+    for (double theta : {0.0, 0.1, 0.25, 0.5}) {
+        const double q_bh = x.dot(apply_hs_operator(mesh, x, s, theta));
+        const double ratio = q_bh / q_brute;
+        std::cout << "    " << name << "," << theta << "," << q_brute
+                  << "," << q_bh << "," << ratio << "\n";
+    }
+}
+
+void test_theta_sweep_table() {
+    std::cout << "-- theta sweep table for A quadratic approximation --\n";
+    std::cout << "    mesh,theta,A_brute,A_BH,ratio\n";
+    print_theta_sweep_for_mesh("icosphere_2", rsh::make_icosphere(2), 0.4);
+    print_theta_sweep_for_mesh("icosphere_3", rsh::make_icosphere(3), 0.4);
+}
+
+void test_nullspace_and_spd() {
+    std::cout << "-- A nullspace and positivity --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+
+    const Eigen::VectorXd constant =
+        Eigen::VectorXd::Constant(mesh.n_vertices(), 2.0);
+    const Eigen::VectorXd A_constant = apply_hs_operator(mesh, constant, s, 0.0);
+    const double const_norm = A_constant.norm();
+    std::cout << "    ||A*1|| = " << const_norm << "\n";
+    check(const_norm < 1e-10, "constant field is in A's nullspace");
+
+    Eigen::VectorXd x = deterministic_field(mesh.n_vertices(), 0.7);
+    x.array() -= x.mean();
+    const double q = x.dot(apply_hs_operator(mesh, x, s, 0.0));
+    std::cout << "    mean-zero x^T A x = " << q << "\n";
+    check(q > 0.0, "mean-zero nonconstant field has positive A quadratic form");
 }
 
 } // namespace
 
 int main() {
     std::cout << std::setprecision(17);
-    std::cout << "=== Hs high-order B validation ===\n";
+    std::cout << "=== Hs A = B + B_0 validation ===\n";
 
     test_two_triangle_hand_case();
     test_distance_sweep();
+    test_b0_two_triangle_hand_case();
+    test_b0_distance_sweep();
     test_linearity();
     test_symmetry();
     test_brute_reference();
+    test_theta_sweep_table();
+    test_nullspace_and_spd();
 
     std::cout << "\n"
               << (failures == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string(failures))
