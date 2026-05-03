@@ -20,10 +20,13 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
+#include "ShellEnergy.h"
 #include "TestMeshes.h"
+#include "TPE.h"
 #include "../src/core/HsPreconditioner.cpp"
 
 namespace {
@@ -57,6 +60,22 @@ rsh::MeshData make_parallel_triangles(double d) {
               3, 4, 5;
     mesh.L0 = 0.0;
     return mesh;
+}
+
+rsh::MeshData combine_meshes(const rsh::MeshData &a, const rsh::MeshData &b) {
+    rsh::MeshData out;
+    const int av = a.n_vertices();
+    const int bv = b.n_vertices();
+    const int af = a.n_faces();
+    const int bf = b.n_faces();
+    out.V.resize(av + bv, 3);
+    out.V.topRows(av) = a.V;
+    out.V.bottomRows(bv) = b.V;
+    out.F.resize(af + bf, 3);
+    out.F.topRows(af) = a.F;
+    out.F.bottomRows(bf) = b.F.array() + av;
+    out.L0 = out.compute_L0();
+    return out;
 }
 
 Eigen::Vector3d face_grad(const rsh::MeshData &mesh,
@@ -347,7 +366,11 @@ SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
                                double s,
                                double theta,
                                int max_iters,
-                               double tol) {
+                               double tol,
+                               rsh::HsLaplacianInverseMode inverse_mode =
+                                   rsh::HsLaplacianInverseMode::RawStiffness,
+                               rsh::HsConstantProjectionMode projection_mode =
+                                   rsh::HsConstantProjectionMode::Algebraic) {
     rsh::HsPreconditionerParams params;
     params.s = s;
     params.sigma = 1.0;
@@ -359,11 +382,12 @@ SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
     const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
     const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
     const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
-    const rsh::HsSandwichPreconditioner sandwich(hs, middle);
+    const rsh::HsSandwichPreconditioner sandwich(
+        hs, middle, inverse_mode, projection_mode);
     const rsh::HsRightPreconditionedOperator right_op(op, sandwich);
 
     Eigen::VectorXd rhs_projected = rhs;
-    project_constant_mode(rhs_projected);
+    sandwich.project(rhs_projected);
 
     Eigen::GMRES<rsh::HsRightPreconditionedOperator,
                  Eigen::IdentityPreconditioner> gmres;
@@ -374,12 +398,25 @@ SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
     SolveStats out;
     const Eigen::VectorXd z = gmres.solve(rhs_projected);
     out.x = sandwich.solve(z);
-    project_constant_mode(out.x);
+    sandwich.project(out.x);
     out.iterations = static_cast<int>(gmres.iterations());
     out.error = gmres.error();
     out.info = gmres.info();
     out.residual = (op * out.x - rhs_projected).norm() /
                    std::max(1.0, rhs_projected.norm());
+    return out;
+}
+
+std::string variant_name(rsh::HsLaplacianInverseMode inverse_mode,
+                         rsh::HsConstantProjectionMode projection_mode) {
+    std::string out =
+        inverse_mode == rsh::HsLaplacianInverseMode::LaplaceBeltrami
+            ? "LinvM"
+            : "Linv";
+    out += "+";
+    out += projection_mode == rsh::HsConstantProjectionMode::MassWeighted
+        ? "Pmass"
+        : "Palg";
     return out;
 }
 
@@ -637,6 +674,70 @@ void test_scalar_fractional_laplacian_brute_reference() {
     }
 }
 
+void test_sandwich_psd_probe() {
+    std::cout << "-- sandwich preconditioner PSD probe --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+
+    struct Variant {
+        rsh::HsLaplacianInverseMode inverse_mode;
+        rsh::HsConstantProjectionMode projection_mode;
+    };
+
+    const std::vector<Variant> variants = {
+        {rsh::HsLaplacianInverseMode::RawStiffness,
+         rsh::HsConstantProjectionMode::Algebraic},
+        {rsh::HsLaplacianInverseMode::RawStiffness,
+         rsh::HsConstantProjectionMode::MassWeighted},
+        {rsh::HsLaplacianInverseMode::LaplaceBeltrami,
+         rsh::HsConstantProjectionMode::Algebraic},
+        {rsh::HsLaplacianInverseMode::LaplaceBeltrami,
+         rsh::HsConstantProjectionMode::MassWeighted},
+    };
+
+    for (const Variant &variant : variants) {
+        const rsh::HsSandwichPreconditioner sandwich(
+            hs, middle, variant.inverse_mode, variant.projection_mode);
+        double min_q_euclidean = std::numeric_limits<double>::infinity();
+        double max_q_euclidean = -std::numeric_limits<double>::infinity();
+        double min_q_mass = std::numeric_limits<double>::infinity();
+        double max_q_mass = -std::numeric_limits<double>::infinity();
+
+        for (int i = 0; i < 20; ++i) {
+            Eigen::VectorXd x = deterministic_field(mesh.n_vertices(), 0.17 * i);
+            sandwich.project(x);
+            const Eigen::VectorXd y = sandwich.solve(x);
+            const double q_euclidean = x.dot(y);
+            const double q_mass = (hs.mass_diag.array() * x.array() * y.array()).sum();
+            min_q_euclidean = std::min(min_q_euclidean, q_euclidean);
+            max_q_euclidean = std::max(max_q_euclidean, q_euclidean);
+            min_q_mass = std::min(min_q_mass, q_mass);
+            max_q_mass = std::max(max_q_mass, q_mass);
+        }
+
+        std::cout << "    " << variant_name(variant.inverse_mode,
+                                             variant.projection_mode)
+                  << ": q_euclidean_min=" << min_q_euclidean
+                  << ", q_euclidean_max=" << max_q_euclidean
+                  << ", q_mass_min=" << min_q_mass
+                  << ", q_mass_max=" << max_q_mass << "\n";
+
+        if (variant.inverse_mode == rsh::HsLaplacianInverseMode::RawStiffness &&
+            variant.projection_mode == rsh::HsConstantProjectionMode::Algebraic) {
+            check(min_q_euclidean > 0.0,
+                  "committed raw sandwich is Euclidean-PSD on deterministic probes");
+        }
+    }
+}
+
 void test_sandwich_solver_sanity() {
     std::cout << "-- sandwich preconditioner GMRES sanity --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
@@ -670,10 +771,11 @@ void test_sandwich_resolution_diagnostics() {
     const double s = 5.0 / 3.0;
     const double theta = 0.25;
     std::vector<int> identity_iters;
-    std::vector<int> sandwich_iters;
+    std::vector<int> raw_iters;
+    std::vector<int> paper_iters;
 
-    std::cout << "    mesh,n_v,n_f,identity_iter,sandwich_iter,"
-              << "identity_residual,sandwich_residual\n";
+    std::cout << "    mesh,n_v,n_f,identity_iter,raw_iter,paper_iter,"
+              << "identity_residual,raw_residual,paper_residual\n";
     for (int subdiv : {2, 3, 4}) {
         rsh::MeshData mesh = rsh::make_icosphere(subdiv);
         mesh.L0 = mesh.compute_L0();
@@ -681,32 +783,132 @@ void test_sandwich_resolution_diagnostics() {
             mesh.V.col(0) + 0.3 * mesh.V.col(1) - 0.2 * mesh.V.col(2);
 
         const SolveStats identity = solve_with_identity(mesh, rhs, s, theta, 250, 1e-5);
-        const SolveStats sandwich = solve_with_sandwich(mesh, rhs, s, theta, 250, 1e-5);
+        const SolveStats raw = solve_with_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::RawStiffness,
+            rsh::HsConstantProjectionMode::Algebraic);
+        const SolveStats paper = solve_with_sandwich(
+            mesh, rhs, s, theta, 250, 1e-5,
+            rsh::HsLaplacianInverseMode::LaplaceBeltrami,
+            rsh::HsConstantProjectionMode::MassWeighted);
         identity_iters.push_back(identity.iterations);
-        sandwich_iters.push_back(sandwich.iterations);
+        raw_iters.push_back(raw.iterations);
+        paper_iters.push_back(paper.iterations);
 
         std::cout << "    icosphere_" << subdiv << "," << mesh.n_vertices()
                   << "," << mesh.n_faces() << "," << identity.iterations
-                  << "," << sandwich.iterations << "," << identity.residual
-                  << "," << sandwich.residual << "\n";
+                  << "," << raw.iterations << "," << paper.iterations
+                  << "," << identity.residual << "," << raw.residual
+                  << "," << paper.residual << "\n";
 
-        check(sandwich.residual < 1e-2,
-              "sandwich solve residual stays controlled at this resolution");
-        check(sandwich.iterations <= identity.iterations,
-              "sandwich iterations do not exceed identity at this resolution");
+        check(raw.residual < 1e-2,
+              "raw sandwich solve residual stays controlled at this resolution");
+        check(raw.iterations <= identity.iterations,
+              "raw sandwich iterations do not exceed identity at this resolution");
+        check(std::isfinite(paper.residual),
+              "paper-weighted sandwich residual is finite at this resolution");
     }
 
-    const double sandwich_growth =
-        static_cast<double>(sandwich_iters.back()) /
-        std::max(1, sandwich_iters.front());
+    const double raw_growth =
+        static_cast<double>(raw_iters.back()) /
+        std::max(1, raw_iters.front());
+    const double paper_growth =
+        static_cast<double>(paper_iters.back()) /
+        std::max(1, paper_iters.front());
     const bool identity_grows =
         identity_iters.back() > identity_iters.front();
-    std::cout << "    sandwich growth icosphere_2->4 = " << sandwich_growth << "\n";
+    std::cout << "    raw sandwich growth icosphere_2->4 = " << raw_growth << "\n";
+    std::cout << "    paper-weighted sandwich growth icosphere_2->4 = "
+              << paper_growth << "\n";
     // This is intentionally diagnostic rather than a hard gate. Unit 2B.3's
     // first implementation improves each solve versus identity, but the 2->4
     // growth is still larger than the RSu Fig. 5 target and is reported in
     // communication.md for reviewer diagnosis.
     check(identity_grows, "identity iteration count grows with resolution");
+}
+
+void test_compression_gradient_descent_safeguard() {
+    std::cout << "-- compression-gradient descent safeguard smoke --\n";
+    rsh::MeshData m_left = rsh::make_icosphere(2);
+    rsh::MeshData m_right = rsh::make_icosphere(2);
+    m_left.V *= 0.5;
+    m_right.V *= 0.5;
+
+    double left_max_x = m_left.V.col(0).maxCoeff();
+    double left_min_x = m_left.V.col(0).minCoeff();
+    double right_min_x = m_right.V.col(0).minCoeff();
+    double right_max_x = m_right.V.col(0).maxCoeff();
+
+    const Eigen::RowVector3d c_left = m_left.V.colwise().mean();
+    const Eigen::RowVector3d c_right = m_right.V.colwise().mean();
+    m_left.V.col(1).array() -= c_left(1);
+    m_left.V.col(2).array() -= c_left(2);
+    m_right.V.col(1).array() -= c_right(1);
+    m_right.V.col(2).array() -= c_right(2);
+
+    m_left.V.col(0).array() += (-0.1 - left_max_x);
+    m_right.V.col(0).array() += (0.1 - right_min_x);
+    left_min_x = m_left.V.col(0).minCoeff();
+    right_max_x = m_right.V.col(0).maxCoeff();
+
+    const rsh::MeshData m_ref = combine_meshes(m_left, m_right);
+    rsh::MeshData m_curr = m_ref;
+
+    std::vector<bool> is_handle(m_ref.n_vertices(), false);
+    const double epsilon = 0.1;
+    for (int i = 0; i < m_ref.n_vertices(); ++i) {
+        const double x = m_ref.V(i, 0);
+        is_handle[static_cast<size_t>(i)] =
+            x <= left_min_x + epsilon || x >= right_max_x - epsilon;
+    }
+
+    for (int i = 0; i < m_curr.n_vertices(); ++i) {
+        if (is_handle[static_cast<size_t>(i)]) {
+            if (m_curr.V(i, 0) < 0.0) {
+                m_curr.V(i, 0) += 0.025;
+            } else {
+                m_curr.V(i, 0) -= 0.025;
+            }
+        }
+    }
+
+    const double alpha = 6.0;
+    const double theta = 0.5;
+    const double tpe_weight = 0.005;
+    const rsh::FaceGeom g = rsh::compute_face_geom(m_curr);
+    const rsh::BVH bvh = rsh::build_bvh(m_curr, g);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const Eigen::MatrixXd G_tpe =
+        rsh::tpe_gradient_bh(m_curr, g, bvh, bp, alpha);
+
+    rsh::ShellEnergyParams shell_params;
+    shell_params.thickness = 0.005;
+    shell_params.lambda = 1.0;
+    shell_params.mu = 1.0;
+    const rsh::ShellEnergyGradientResult shell_res =
+        rsh::shell_energy_with_gradient(m_ref, m_curr, shell_params);
+
+    Eigen::MatrixXd G_total = tpe_weight * G_tpe + shell_res.grad_def;
+    for (int i = 0; i < m_curr.n_vertices(); ++i) {
+        if (is_handle[static_cast<size_t>(i)]) {
+            G_total.row(i).setZero();
+        }
+    }
+
+    rsh::HsPreconditionerParams hs_params;
+    hs_params.s = 1.5;
+    hs_params.sigma = 1.0;
+    hs_params.mass_weight = 1.0;
+    const rsh::HsDirectionResult hs =
+        rsh::hs_preconditioned_direction(m_curr, G_total, hs_params);
+
+    std::cout << "    g_dot_dir=" << hs.g_dot_dir
+              << ", used_identity_fallback="
+              << (hs.used_identity_fallback ? "yes" : "no")
+              << ", max_gmres_iterations=" << hs.max_gmres_iterations
+              << ", max_gmres_error=" << hs.max_gmres_error << "\n";
+    check(hs.g_dot_dir > 0.0,
+          "hs_preconditioned_direction returns a descent direction for the compression gradient");
 }
 
 void test_nullspace_and_spd() {
@@ -745,8 +947,10 @@ int main() {
     test_theta_sweep_table();
     test_scalar_fractional_laplacian_hand_case();
     test_scalar_fractional_laplacian_brute_reference();
+    test_sandwich_psd_probe();
     test_sandwich_solver_sanity();
     test_sandwich_resolution_diagnostics();
+    test_compression_gradient_descent_safeguard();
     test_nullspace_and_spd();
 
     std::cout << "\n"

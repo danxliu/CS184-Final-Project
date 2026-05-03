@@ -32,6 +32,7 @@ struct HsDirectionResult {
     double g_dot_dir = 0.0;
     int max_gmres_iterations = 0;
     double max_gmres_error = 0.0;
+    bool used_identity_fallback = false;
 };
 
 HsOperators build_hs_operators(const MeshData &mesh);

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -144,6 +145,25 @@ double b0_kernel_sym_clusters(const BVHNode &U,
 void project_constant_mode(Eigen::VectorXd &x) {
     if (x.size() == 0) return;
     x.array() -= x.mean();
+}
+
+void project_mass_constant_mode(const HsOperators &hs, Eigen::VectorXd &x) {
+    if (x.size() == 0) return;
+    const double total_mass = hs.mass_diag.sum();
+    if (total_mass <= 0.0 || hs.mass_diag.size() != x.size()) {
+        project_constant_mode(x);
+        return;
+    }
+    const double mean = (hs.mass_diag.array() * x.array()).sum() / total_mass;
+    x.array() -= mean;
+}
+
+Eigen::VectorXd apply_lumped_mass(const HsOperators &hs,
+                                  const Eigen::VectorXd &x) {
+    if (hs.mass_diag.size() != x.size()) {
+        throw std::runtime_error("apply_lumped_mass: size mismatch");
+    }
+    return hs.mass_diag.array() * x.array();
 }
 
 Eigen::SparseMatrix<double> lifted_laplacian(const HsOperators &hs) {
@@ -448,18 +468,58 @@ struct ScalarFractionalLaplacian {
     }
 };
 
+enum class HsLaplacianInverseMode {
+    RawStiffness,
+    LaplaceBeltrami
+};
+
+enum class HsConstantProjectionMode {
+    Algebraic,
+    MassWeighted
+};
+
 struct HsSandwichPreconditioner {
     const HsOperators& hs;
     const ScalarFractionalLaplacian& middle;
+    HsLaplacianInverseMode inverse_mode = HsLaplacianInverseMode::RawStiffness;
+    HsConstantProjectionMode projection_mode = HsConstantProjectionMode::Algebraic;
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> laplacian_factor;
     Eigen::ComputationInfo factor_info = Eigen::InvalidInput;
 
     HsSandwichPreconditioner(const HsOperators& hs,
-                             const ScalarFractionalLaplacian& middle)
-        : hs(hs), middle(middle) {
+                             const ScalarFractionalLaplacian& middle,
+                             HsLaplacianInverseMode inverse_mode =
+                                 HsLaplacianInverseMode::RawStiffness,
+                             HsConstantProjectionMode projection_mode =
+                                 HsConstantProjectionMode::Algebraic)
+        : hs(hs),
+          middle(middle),
+          inverse_mode(inverse_mode),
+          projection_mode(projection_mode) {
         const Eigen::SparseMatrix<double> lifted = lifted_laplacian(hs);
         laplacian_factor.compute(lifted);
         factor_info = laplacian_factor.info();
+    }
+
+    void project(Eigen::VectorXd &x) const {
+        if (projection_mode == HsConstantProjectionMode::MassWeighted) {
+            project_mass_constant_mode(hs, x);
+        } else {
+            project_constant_mode(x);
+        }
+    }
+
+    Eigen::VectorXd laplace_inverse(Eigen::VectorXd rhs) const {
+        if (inverse_mode == HsLaplacianInverseMode::LaplaceBeltrami) {
+            rhs = apply_lumped_mass(hs, rhs);
+        }
+        // The lifted factor can solve a nonzero-sum RHS, but projecting the
+        // RHS keeps the solve aligned with the cotan nullspace we intend to
+        // quotient out.
+        project(rhs);
+        Eigen::VectorXd out = laplacian_factor.solve(rhs);
+        project(out);
+        return out;
     }
 
     template<typename Rhs>
@@ -470,16 +530,15 @@ struct HsSandwichPreconditioner {
         }
 
         Eigen::VectorXd rhs = r;
-        project_constant_mode(rhs);
+        project(rhs);
 
-        Eigen::VectorXd w1 = laplacian_factor.solve(rhs);
-        project_constant_mode(w1);
+        Eigen::VectorXd w1 = laplace_inverse(rhs);
 
         Eigen::VectorXd w2 = middle.apply(w1);
-        project_constant_mode(w2);
+        project(w2);
 
-        Eigen::VectorXd out = laplacian_factor.solve(w2);
-        project_constant_mode(out);
+        Eigen::VectorXd out = laplace_inverse(w2);
+        project(out);
         return out;
     }
 
@@ -644,10 +703,11 @@ HsDirectionResult hs_preconditioned_direction(
     out.direction = Eigen::MatrixXd::Zero(nv, 3);
     out.max_gmres_iterations = 0;
     out.max_gmres_error = 0.0;
+    out.used_identity_fallback = false;
 
     for (int j = 0; j < 3; ++j) {
         Eigen::VectorXd g_col = gradient.col(j);
-        project_constant_mode(g_col);
+        sandwich.project(g_col);
 
         const Eigen::VectorXd z_col = gmres.solve(g_col);
         out.direction.col(j) = sandwich.solve(z_col);
@@ -660,24 +720,66 @@ HsDirectionResult hs_preconditioned_direction(
             // Fallback or warning could be added here
         }
 
-        // Project out the algebraic constant mode of A.
+        // Project out the chosen constant mode of A.
         Eigen::VectorXd d_col = out.direction.col(j);
-        project_constant_mode(d_col);
+        sandwich.project(d_col);
         out.direction.col(j) = d_col;
     }
 
-    if (!out.direction.allFinite()) {
-        throw std::runtime_error(
-            "hs_preconditioned_direction: direction contains NaN/Inf");
-    }
+    auto compute_g_dot_dir = [&]() {
+        return (gradient.array() * out.direction.array()).sum();
+    };
 
-    out.g_dot_dir = (gradient.array() * out.direction.array()).sum();
+    out.g_dot_dir = out.direction.allFinite()
+        ? compute_g_dot_dir()
+        : std::numeric_limits<double>::quiet_NaN();
+
+    if (!out.direction.allFinite() ||
+        !std::isfinite(out.g_dot_dir) ||
+        out.g_dot_dir <= 0.0) {
+        std::cerr
+            << "hs_preconditioned_direction: sandwich GMRES produced a "
+            << "non-descent or invalid direction (g_dot_dir = "
+            << out.g_dot_dir
+            << "); falling back to identity-preconditioned GMRES\n";
+
+        Eigen::GMRES<HsOperator, Eigen::IdentityPreconditioner> identity_gmres;
+        identity_gmres.compute(op);
+        identity_gmres.setTolerance(1e-6);
+        identity_gmres.setMaxIterations(100);
+
+        out.direction.setZero();
+        out.max_gmres_iterations = 0;
+        out.max_gmres_error = 0.0;
+        out.used_identity_fallback = true;
+
+        for (int j = 0; j < 3; ++j) {
+            Eigen::VectorXd g_col = gradient.col(j);
+            sandwich.project(g_col);
+
+            Eigen::VectorXd d_col = identity_gmres.solve(g_col);
+            sandwich.project(d_col);
+            out.direction.col(j) = d_col;
+
+            out.max_gmres_iterations =
+                std::max(out.max_gmres_iterations,
+                         static_cast<int>(identity_gmres.iterations()));
+            out.max_gmres_error =
+                std::max(out.max_gmres_error, identity_gmres.error());
+        }
+
+        if (!out.direction.allFinite()) {
+            throw std::runtime_error(
+                "hs_preconditioned_direction: fallback direction contains NaN/Inf");
+        }
+        out.g_dot_dir = compute_g_dot_dir();
+    }
     if (!std::isfinite(out.g_dot_dir)) {
         throw std::runtime_error("hs_preconditioned_direction: g_dot_dir is not finite");
     }
     if (out.g_dot_dir <= 0.0) {
         throw std::runtime_error(
-            "hs_preconditioned_direction: g_dot_dir must be positive, got " +
+            "hs_preconditioned_direction: g_dot_dir must be positive after fallback, got " +
             std::to_string(out.g_dot_dir));
     }
     return out;
