@@ -80,6 +80,9 @@ target_link_libraries(test_phase1 PRIVATE rsh_core)
 add_executable(test_phase2 tests/test_phase2.cpp)
 target_link_libraries(test_phase2 PRIVATE rsh_core)
 
+add_executable(test_hs_kernel_exponent tests/test_hs_kernel_exponent.cpp)
+target_link_libraries(test_hs_kernel_exponent PRIVATE rsh_core)
+
 add_executable(dump_test_meshes tests/dump_test_meshes.cpp)
 target_link_libraries(dump_test_meshes PRIVATE rsh_core)
 
