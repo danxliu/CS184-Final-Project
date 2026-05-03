@@ -3,21 +3,23 @@
 #include "BVH.h"
 #include "BCT.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include <iostream>
-#include <memory>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
 #include <unsupported/Eigen/IterativeSolvers>
 
 namespace rsh {
 
 // Forward declaration for traits specialization
 struct HsOperator;
+struct HsRightPreconditionedOperator;
 
 } // namespace rsh
 
@@ -25,6 +27,8 @@ namespace Eigen {
 namespace internal {
 template <>
 struct traits<rsh::HsOperator> : public traits<Eigen::MatrixXd> {};
+template <>
+struct traits<rsh::HsRightPreconditionedOperator> : public traits<Eigen::MatrixXd> {};
 } // namespace internal
 } // namespace Eigen
 
@@ -135,6 +139,19 @@ double b0_kernel_sym_clusters(const BVHNode &U,
     const double pU = nU.dot(e);
     const double pV = nV.dot(-e);
     return (pU * pU + pV * pV) / std::pow(r2, s + 2.0);
+}
+
+void project_constant_mode(Eigen::VectorXd &x) {
+    if (x.size() == 0) return;
+    x.array() -= x.mean();
+}
+
+Eigen::SparseMatrix<double> lifted_laplacian(const HsOperators &hs) {
+    constexpr double kLift = 1e-12;
+    Eigen::SparseMatrix<double> lifted = hs.L;
+    lifted += kLift * hs.M;
+    lifted.makeCompressed();
+    return lifted;
 }
 
 } // namespace
@@ -318,6 +335,185 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
     }
 };
 
+// Matrix-free scalar fractional Laplacian from RSu Eq. 6. The parameter
+// sigma_scalar gives an operator of order 2*sigma_scalar on a surface:
+//
+//   <L^sigma u, v> = int int (u(x)-u(y))(v(x)-v(y))
+//                    / |f(x)-f(y)|^(2*sigma_scalar + 2).
+//
+// Unit 2B.3 uses sigma_scalar = 2 - s as the middle forward apply in the
+// sandwich preconditioner Abar^{-1}.
+struct ScalarFractionalLaplacian {
+    const MeshData& mesh;
+    const FaceGeom& g;
+    const BVH& bvh;
+    const BlockPairs& bp;
+    double sigma_scalar = 1.0;
+
+    ScalarFractionalLaplacian(const MeshData& mesh,
+                              const FaceGeom& g,
+                              const BVH& bvh,
+                              const BlockPairs& bp,
+                              double sigma_scalar)
+        : mesh(mesh), g(g), bvh(bvh), bp(bp), sigma_scalar(sigma_scalar) {}
+
+    template<typename Rhs>
+    Eigen::VectorXd apply(const Eigen::MatrixBase<Rhs>& x) const {
+        const int nf = mesh.n_faces();
+        const int nv = mesh.n_vertices();
+        const double power = sigma_scalar + 1.0;
+
+        Eigen::VectorXd face_x(nf);
+        for (int f = 0; f < nf; ++f) {
+            face_x(f) = face_average(mesh, x, f);
+        }
+
+        std::vector<double> Q(static_cast<size_t>(bvh.n_nodes()), 0.0);
+        for (int i = bvh.n_nodes() - 1; i >= 0; --i) {
+            const BVHNode& node = bvh.nodes[i];
+            if (node.is_leaf()) {
+                double sum = 0.0;
+                for (int j = node.face_start; j < node.face_end; ++j) {
+                    const int f = bvh.face_indices[j];
+                    sum += g.A(f) * face_x(f);
+                }
+                Q[static_cast<size_t>(i)] = sum;
+            } else {
+                Q[static_cast<size_t>(i)] =
+                    Q[static_cast<size_t>(node.left)] +
+                    Q[static_cast<size_t>(node.right)];
+            }
+        }
+
+        std::vector<double> SumA(bvh.n_nodes(), 0.0);
+        std::vector<double> SumQ(bvh.n_nodes(), 0.0);
+        for (const auto& cp : bp.admissible) {
+            const BVHNode& U = bvh.nodes[cp.u];
+            const BVHNode& V = bvh.nodes[cp.v];
+            const double r2 = (U.centroid - V.centroid).squaredNorm();
+            if (r2 == 0.0) continue;
+            const double K = 1.0 / std::pow(r2, power);
+            SumA[cp.u] += K * V.area;
+            SumQ[cp.u] += K * Q[static_cast<size_t>(cp.v)];
+        }
+
+        for (int i = 0; i < bvh.n_nodes(); ++i) {
+            const BVHNode& node = bvh.nodes[i];
+            if (!node.is_leaf()) {
+                SumA[node.left] += SumA[i];
+                SumQ[node.left] += SumQ[i];
+                SumA[node.right] += SumA[i];
+                SumQ[node.right] += SumQ[i];
+            }
+        }
+
+        Eigen::VectorXd face_dual = Eigen::VectorXd::Zero(nf);
+        for (int i = 0; i < bvh.n_nodes(); ++i) {
+            const BVHNode& node = bvh.nodes[i];
+            if (node.is_leaf()) {
+                for (int j = node.face_start; j < node.face_end; ++j) {
+                    const int f = bvh.face_indices[j];
+                    face_dual(f) +=
+                        2.0 * g.A(f) * (face_x(f) * SumA[i] - SumQ[i]);
+                }
+            }
+        }
+
+        for (const auto& cp : bp.near_field) {
+            const BVHNode& U = bvh.nodes[cp.u];
+            const BVHNode& V = bvh.nodes[cp.v];
+            const bool self = (cp.u == cp.v);
+            for (int i = U.face_start; i < U.face_end; ++i) {
+                const int a = bvh.face_indices[i];
+                for (int j = V.face_start; j < V.face_end; ++j) {
+                    const int b = bvh.face_indices[j];
+                    if (self && a == b) continue;
+                    const double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
+                    if (r2 == 0.0) continue;
+                    const double K = 1.0 / std::pow(r2, power);
+                    face_dual(a) +=
+                        2.0 * g.A(a) * g.A(b) * K * (face_x(a) - face_x(b));
+                }
+            }
+        }
+
+        Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
+        for (int f = 0; f < nf; ++f) {
+            const double vertex_value = face_dual(f) / 3.0;
+            y(mesh.F(f, 0)) += vertex_value;
+            y(mesh.F(f, 1)) += vertex_value;
+            y(mesh.F(f, 2)) += vertex_value;
+        }
+        return y;
+    }
+};
+
+struct HsSandwichPreconditioner {
+    const HsOperators& hs;
+    const ScalarFractionalLaplacian& middle;
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> laplacian_factor;
+    Eigen::ComputationInfo factor_info = Eigen::InvalidInput;
+
+    HsSandwichPreconditioner(const HsOperators& hs,
+                             const ScalarFractionalLaplacian& middle)
+        : hs(hs), middle(middle) {
+        const Eigen::SparseMatrix<double> lifted = lifted_laplacian(hs);
+        laplacian_factor.compute(lifted);
+        factor_info = laplacian_factor.info();
+    }
+
+    template<typename Rhs>
+    Eigen::VectorXd solve(const Eigen::MatrixBase<Rhs>& r) const {
+        if (factor_info != Eigen::Success) {
+            throw std::runtime_error(
+                "HsSandwichPreconditioner: lifted cotan factorization failed");
+        }
+
+        Eigen::VectorXd rhs = r;
+        project_constant_mode(rhs);
+
+        Eigen::VectorXd w1 = laplacian_factor.solve(rhs);
+        project_constant_mode(w1);
+
+        Eigen::VectorXd w2 = middle.apply(w1);
+        project_constant_mode(w2);
+
+        Eigen::VectorXd out = laplacian_factor.solve(w2);
+        project_constant_mode(out);
+        return out;
+    }
+
+    Eigen::ComputationInfo info() const { return factor_info; }
+};
+
+struct HsRightPreconditionedOperator
+    : public Eigen::EigenBase<HsRightPreconditionedOperator> {
+    const HsOperator& op;
+    const HsSandwichPreconditioner& preconditioner;
+
+    HsRightPreconditionedOperator(const HsOperator& op,
+                                  const HsSandwichPreconditioner& preconditioner)
+        : op(op), preconditioner(preconditioner) {}
+
+    typedef double Scalar;
+    typedef double RealScalar;
+    typedef int StorageIndex;
+    typedef int Index;
+    enum {
+        ColsAtCompileTime = Eigen::Dynamic,
+        MaxColsAtCompileTime = Eigen::Dynamic,
+        IsRowMajor = false
+    };
+
+    Index rows() const { return op.rows(); }
+    Index cols() const { return op.cols(); }
+
+    template<typename Rhs>
+    Eigen::VectorXd operator*(const Eigen::MatrixBase<Rhs>& z) const {
+        return op * preconditioner.solve(z);
+    }
+};
+
 HsOperators build_hs_operators(const MeshData &mesh) {
     HsOperators out;
     const int nv = mesh.n_vertices();
@@ -401,9 +597,16 @@ HsDirectionResult hs_preconditioned_direction(
         throw std::runtime_error(
             "hs_preconditioned_direction: gradient contains NaN/Inf");
     }
-    if (!std::isfinite(params.sigma) || !std::isfinite(params.mass_weight)) {
+    if (!std::isfinite(params.s) ||
+        !std::isfinite(params.sigma) ||
+        !std::isfinite(params.mass_weight) ||
+        !std::isfinite(params.theta)) {
         throw std::runtime_error(
-            "hs_preconditioned_direction: sigma and mass_weight must be finite");
+            "hs_preconditioned_direction: s, sigma, mass_weight, and theta must be finite");
+    }
+    if (params.s < 1.0 || params.s >= 2.0) {
+        throw std::runtime_error(
+            "hs_preconditioned_direction: s must be in [1, 2) for the RSu sandwich");
     }
     if (params.sigma < 0.0) {
         throw std::runtime_error(
@@ -413,35 +616,54 @@ HsDirectionResult hs_preconditioned_direction(
         throw std::runtime_error(
             "hs_preconditioned_direction: mass_weight must be non-negative");
     }
+    if (params.theta < 0.0) {
+        throw std::runtime_error(
+            "hs_preconditioned_direction: theta must be non-negative");
+    }
 
     const HsOperators hs = build_hs_operators(mesh);
     const FaceGeom g = compute_face_geom(mesh);
     const BVH bvh = build_bvh(mesh, g);
-    const BlockPairs bp = build_bct_self(bvh, 0.5);
+    const BlockPairs bp = build_bct_self(bvh, params.theta);
 
     HsOperator op(mesh, params, hs, g, bvh, bp);
-    Eigen::GMRES<HsOperator, Eigen::IdentityPreconditioner> gmres;
-    gmres.compute(op);
+    ScalarFractionalLaplacian middle(mesh, g, bvh, bp, 2.0 - params.s);
+    HsSandwichPreconditioner sandwich(hs, middle);
+    if (sandwich.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "hs_preconditioned_direction: lifted cotan factorization failed");
+    }
+
+    HsRightPreconditionedOperator right_op(op, sandwich);
+    Eigen::GMRES<HsRightPreconditionedOperator, Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(right_op);
     gmres.setTolerance(1e-6);
     gmres.setMaxIterations(100);
 
     HsDirectionResult out;
     out.direction = Eigen::MatrixXd::Zero(nv, 3);
+    out.max_gmres_iterations = 0;
+    out.max_gmres_error = 0.0;
 
     for (int j = 0; j < 3; ++j) {
         Eigen::VectorXd g_col = gradient.col(j);
-        out.direction.col(j) = gmres.solve(g_col);
+        project_constant_mode(g_col);
+
+        const Eigen::VectorXd z_col = gmres.solve(g_col);
+        out.direction.col(j) = sandwich.solve(z_col);
+        out.max_gmres_iterations =
+            std::max(out.max_gmres_iterations,
+                     static_cast<int>(gmres.iterations()));
+        out.max_gmres_error = std::max(out.max_gmres_error, gmres.error());
 
         if (gmres.info() != Eigen::Success) {
             // Fallback or warning could be added here
         }
 
-        // Project out translation (ensure area-weighted mean is zero)
-        const double total_mass = hs.mass_diag.sum();
-        if (total_mass > 0.0) {
-            double mean = (hs.mass_diag.array() * out.direction.col(j).array()).sum() / total_mass;
-            out.direction.col(j).array() -= mean;
-        }
+        // Project out the algebraic constant mode of A.
+        Eigen::VectorXd d_col = out.direction.col(j);
+        project_constant_mode(d_col);
+        out.direction.col(j) = d_col;
     }
 
     if (!out.direction.allFinite()) {

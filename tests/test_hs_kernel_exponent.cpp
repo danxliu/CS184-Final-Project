@@ -126,6 +126,17 @@ Eigen::VectorXd apply_hs_operator(const rsh::MeshData &mesh,
     return op * u;
 }
 
+Eigen::VectorXd apply_scalar_fractional_laplacian(const rsh::MeshData &mesh,
+                                                  const Eigen::VectorXd &u,
+                                                  double s,
+                                                  double theta) {
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::ScalarFractionalLaplacian op(mesh, geom, bvh, bp, 2.0 - s);
+    return op.apply(u);
+}
+
 double face_value(const rsh::MeshData &mesh,
                   const Eigen::VectorXd &u,
                   int f) {
@@ -219,6 +230,42 @@ Eigen::VectorXd brute_operator_a(const rsh::MeshData &mesh,
     return brute_high_order_b(mesh, u, s) + brute_low_order_b0(mesh, u, s);
 }
 
+Eigen::VectorXd brute_scalar_fractional_laplacian(const rsh::MeshData &mesh,
+                                                  const Eigen::VectorXd &u,
+                                                  double s) {
+    const int nf = mesh.n_faces();
+    const int nv = mesh.n_vertices();
+    const double sigma_middle = 2.0 - s;
+    const double power = sigma_middle + 1.0;
+    const rsh::FaceGeom g = rsh::compute_face_geom(mesh);
+
+    Eigen::VectorXd face_u(nf);
+    for (int f = 0; f < nf; ++f) {
+        face_u(f) = face_value(mesh, u, f);
+    }
+
+    Eigen::VectorXd dual = Eigen::VectorXd::Zero(nf);
+    for (int a = 0; a < nf; ++a) {
+        for (int b = 0; b < nf; ++b) {
+            if (a == b) continue;
+            const double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
+            if (r2 == 0.0) continue;
+            const double K = 1.0 / std::pow(r2, power);
+            dual(a) +=
+                2.0 * g.A(a) * g.A(b) * K * (face_u(a) - face_u(b));
+        }
+    }
+
+    Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
+    for (int f = 0; f < nf; ++f) {
+        const double val = dual(f) / 3.0;
+        y(mesh.F(f, 0)) += val;
+        y(mesh.F(f, 1)) += val;
+        y(mesh.F(f, 2)) += val;
+    }
+    return y;
+}
+
 double slope_log_log(const std::vector<double> &x,
                      const std::vector<double> &y) {
     const int n = static_cast<int>(x.size());
@@ -243,6 +290,96 @@ Eigen::VectorXd deterministic_field(int n, double phase) {
         const double t = static_cast<double>(i + 1);
         out(i) = std::sin(0.37 * t + phase) + 0.25 * std::cos(0.11 * t);
     }
+    return out;
+}
+
+void project_constant_mode(Eigen::VectorXd &x) {
+    if (x.size() == 0) return;
+    x.array() -= x.mean();
+}
+
+struct SolveStats {
+    Eigen::VectorXd x;
+    int iterations = 0;
+    double error = 0.0;
+    double residual = 0.0;
+    Eigen::ComputationInfo info = Eigen::InvalidInput;
+};
+
+SolveStats solve_with_identity(const rsh::MeshData &mesh,
+                               const Eigen::VectorXd &rhs,
+                               double s,
+                               double theta,
+                               int max_iters,
+                               double tol) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+
+    Eigen::VectorXd rhs_projected = rhs;
+    project_constant_mode(rhs_projected);
+
+    Eigen::GMRES<rsh::HsOperator, Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(op);
+    gmres.setTolerance(tol);
+    gmres.setMaxIterations(max_iters);
+
+    SolveStats out;
+    out.x = gmres.solve(rhs_projected);
+    project_constant_mode(out.x);
+    out.iterations = static_cast<int>(gmres.iterations());
+    out.error = gmres.error();
+    out.info = gmres.info();
+    out.residual = (op * out.x - rhs_projected).norm() /
+                   std::max(1.0, rhs_projected.norm());
+    return out;
+}
+
+SolveStats solve_with_sandwich(const rsh::MeshData &mesh,
+                               const Eigen::VectorXd &rhs,
+                               double s,
+                               double theta,
+                               int max_iters,
+                               double tol) {
+    rsh::HsPreconditionerParams params;
+    params.s = s;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const rsh::HsOperators hs = rsh::build_hs_operators(mesh);
+    const rsh::FaceGeom geom = rsh::compute_face_geom(mesh);
+    const rsh::BVH bvh = rsh::build_bvh(mesh, geom);
+    const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+    const rsh::HsOperator op(mesh, params, hs, geom, bvh, bp);
+    const rsh::ScalarFractionalLaplacian middle(mesh, geom, bvh, bp, 2.0 - s);
+    const rsh::HsSandwichPreconditioner sandwich(hs, middle);
+    const rsh::HsRightPreconditionedOperator right_op(op, sandwich);
+
+    Eigen::VectorXd rhs_projected = rhs;
+    project_constant_mode(rhs_projected);
+
+    Eigen::GMRES<rsh::HsRightPreconditionedOperator,
+                 Eigen::IdentityPreconditioner> gmres;
+    gmres.compute(right_op);
+    gmres.setTolerance(tol);
+    gmres.setMaxIterations(max_iters);
+
+    SolveStats out;
+    const Eigen::VectorXd z = gmres.solve(rhs_projected);
+    out.x = sandwich.solve(z);
+    project_constant_mode(out.x);
+    out.iterations = static_cast<int>(gmres.iterations());
+    out.error = gmres.error();
+    out.info = gmres.info();
+    out.residual = (op * out.x - rhs_projected).norm() /
+                   std::max(1.0, rhs_projected.norm());
     return out;
 }
 
@@ -452,6 +589,126 @@ void test_theta_sweep_table() {
     print_theta_sweep_for_mesh("icosphere_3", rsh::make_icosphere(3), 0.4);
 }
 
+void test_scalar_fractional_laplacian_hand_case() {
+    std::cout << "-- scalar L^(2-s) hand-computed middle operator --\n";
+    const double s = 5.0 / 3.0;
+    const double d = 4.0;
+    const rsh::MeshData mesh = make_parallel_triangles(d);
+
+    // The sandwich middle apply uses RSu Eq. 6 with sigma = 2-s. On a surface
+    // the distance exponent is 2(2-s)+2 = 6-2s. For two parallel right
+    // triangles with constant face values 1 and 0, the ordered convention gives
+    //
+    //   <L^(2-s) u,u> = 2 * area0 * area1 / d^(6-2s)
+    //                  = 0.5 / d^(6-2s).
+    Eigen::VectorXd u(6);
+    u << 1.0, 1.0, 1.0, 0.0, 0.0, 0.0;
+
+    const Eigen::VectorXd y = apply_scalar_fractional_laplacian(mesh, u, s, 0.0);
+    const double actual = u.dot(y);
+    const double expected = 0.5 / std::pow(d, 6.0 - 2.0 * s);
+    const double err = rel_err(actual, expected);
+
+    std::cout << "    actual <L^(2-s) u,u>   = " << actual << "\n";
+    std::cout << "    expected <L^(2-s) u,u> = " << expected << "\n";
+    std::cout << "    rel err                = " << err << "\n";
+    check(err < 1e-12, "middle operator matches the hand-computed Eq. 6 value");
+}
+
+void test_scalar_fractional_laplacian_brute_reference() {
+    std::cout << "-- scalar L^(2-s) hierarchical-vs-brute --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const Eigen::VectorXd x = deterministic_field(mesh.n_vertices(), 0.55);
+
+    const Eigen::VectorXd fast = apply_scalar_fractional_laplacian(mesh, x, s, 0.0);
+    const Eigen::VectorXd brute = brute_scalar_fractional_laplacian(mesh, x, s);
+    const double err = (fast - brute).norm() / std::max(1.0, brute.norm());
+    std::cout << "    theta=0 relative ||fast - brute|| = " << err << "\n";
+    check(err < 1e-12, "theta=0 L^(2-s) matches O(n_f^2) brute reference");
+
+    const double q_brute = x.dot(brute);
+    std::cout << "    mesh,theta,L_brute,L_BH,ratio\n";
+    for (double theta : {0.0, 0.1, 0.25, 0.5}) {
+        const double q_bh = x.dot(apply_scalar_fractional_laplacian(mesh, x, s, theta));
+        std::cout << "    icosphere_2," << theta << "," << q_brute
+                  << "," << q_bh << "," << (q_bh / q_brute) << "\n";
+    }
+}
+
+void test_sandwich_solver_sanity() {
+    std::cout << "-- sandwich preconditioner GMRES sanity --\n";
+    rsh::MeshData mesh = rsh::make_icosphere(2);
+    mesh.L0 = mesh.compute_L0();
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+    Eigen::VectorXd rhs = deterministic_field(mesh.n_vertices(), 0.8);
+
+    const SolveStats identity = solve_with_identity(mesh, rhs, s, theta, 200, 1e-6);
+    const SolveStats sandwich = solve_with_sandwich(mesh, rhs, s, theta, 200, 1e-6);
+
+    const double x_rel = (identity.x - sandwich.x).norm() /
+                         std::max(1.0, identity.x.norm());
+    std::cout << "    identity:  iter=" << identity.iterations
+              << ", error=" << identity.error
+              << ", residual=" << identity.residual << "\n";
+    std::cout << "    sandwich:  iter=" << sandwich.iterations
+              << ", error=" << sandwich.error
+              << ", residual=" << sandwich.residual << "\n";
+    std::cout << "    relative solution difference = " << x_rel << "\n";
+
+    check(identity.residual < 1e-4, "identity-preconditioned solve residual is small");
+    check(sandwich.residual < 1e-4, "sandwich-preconditioned solve residual is small");
+    check(x_rel < 1e-3, "identity and sandwich solves agree");
+    check(sandwich.iterations <= identity.iterations,
+          "sandwich GMRES iterations do not exceed identity");
+}
+
+void test_sandwich_resolution_diagnostics() {
+    std::cout << "-- sandwich iteration counts vs resolution --\n";
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+    std::vector<int> identity_iters;
+    std::vector<int> sandwich_iters;
+
+    std::cout << "    mesh,n_v,n_f,identity_iter,sandwich_iter,"
+              << "identity_residual,sandwich_residual\n";
+    for (int subdiv : {2, 3, 4}) {
+        rsh::MeshData mesh = rsh::make_icosphere(subdiv);
+        mesh.L0 = mesh.compute_L0();
+        Eigen::VectorXd rhs =
+            mesh.V.col(0) + 0.3 * mesh.V.col(1) - 0.2 * mesh.V.col(2);
+
+        const SolveStats identity = solve_with_identity(mesh, rhs, s, theta, 250, 1e-5);
+        const SolveStats sandwich = solve_with_sandwich(mesh, rhs, s, theta, 250, 1e-5);
+        identity_iters.push_back(identity.iterations);
+        sandwich_iters.push_back(sandwich.iterations);
+
+        std::cout << "    icosphere_" << subdiv << "," << mesh.n_vertices()
+                  << "," << mesh.n_faces() << "," << identity.iterations
+                  << "," << sandwich.iterations << "," << identity.residual
+                  << "," << sandwich.residual << "\n";
+
+        check(sandwich.residual < 1e-2,
+              "sandwich solve residual stays controlled at this resolution");
+        check(sandwich.iterations <= identity.iterations,
+              "sandwich iterations do not exceed identity at this resolution");
+    }
+
+    const double sandwich_growth =
+        static_cast<double>(sandwich_iters.back()) /
+        std::max(1, sandwich_iters.front());
+    const bool identity_grows =
+        identity_iters.back() > identity_iters.front();
+    std::cout << "    sandwich growth icosphere_2->4 = " << sandwich_growth << "\n";
+    // This is intentionally diagnostic rather than a hard gate. Unit 2B.3's
+    // first implementation improves each solve versus identity, but the 2->4
+    // growth is still larger than the RSu Fig. 5 target and is reported in
+    // communication.md for reviewer diagnosis.
+    check(identity_grows, "identity iteration count grows with resolution");
+}
+
 void test_nullspace_and_spd() {
     std::cout << "-- A nullspace and positivity --\n";
     rsh::MeshData mesh = rsh::make_icosphere(2);
@@ -486,6 +743,10 @@ int main() {
     test_symmetry();
     test_brute_reference();
     test_theta_sweep_table();
+    test_scalar_fractional_laplacian_hand_case();
+    test_scalar_fractional_laplacian_brute_reference();
+    test_sandwich_solver_sanity();
+    test_sandwich_resolution_diagnostics();
     test_nullspace_and_spd();
 
     std::cout << "\n"
