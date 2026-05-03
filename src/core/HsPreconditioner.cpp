@@ -48,9 +48,61 @@ double robust_cotangent(const Eigen::Vector3d &u, const Eigen::Vector3d &v) {
     return std::isfinite(cot) ? cot : 0.0;
 }
 
+Eigen::Vector3d face_scalar_gradient(const MeshData &mesh,
+                                     const FaceGeom &g,
+                                     const Eigen::VectorXd &x,
+                                     int f) {
+    const int i0 = mesh.F(f, 0);
+    const int i1 = mesh.F(f, 1);
+    const int i2 = mesh.F(f, 2);
+
+    const Eigen::Vector3d v0 = mesh.V.row(i0).transpose();
+    const Eigen::Vector3d v1 = mesh.V.row(i1).transpose();
+    const Eigen::Vector3d v2 = mesh.V.row(i2).transpose();
+
+    Eigen::Vector3d E0;
+    Eigen::Vector3d E1;
+    Eigen::Vector3d E2;
+    opposite_edges(v0, v1, v2, E0, E1, E2);
+
+    const Eigen::Vector3d n = g.N.row(f).transpose();
+    const double inv_2a = 1.0 / (2.0 * g.A(f));
+    return inv_2a *
+        (x(i0) * n.cross(E0) +
+         x(i1) * n.cross(E1) +
+         x(i2) * n.cross(E2));
+}
+
+void scatter_face_gradient_adjoint(const MeshData &mesh,
+                                   const FaceGeom &g,
+                                   int f,
+                                   const Eigen::Vector3d &face_dual,
+                                   Eigen::VectorXd &y) {
+    const int i0 = mesh.F(f, 0);
+    const int i1 = mesh.F(f, 1);
+    const int i2 = mesh.F(f, 2);
+
+    const Eigen::Vector3d v0 = mesh.V.row(i0).transpose();
+    const Eigen::Vector3d v1 = mesh.V.row(i1).transpose();
+    const Eigen::Vector3d v2 = mesh.V.row(i2).transpose();
+
+    Eigen::Vector3d E0;
+    Eigen::Vector3d E1;
+    Eigen::Vector3d E2;
+    opposite_edges(v0, v1, v2, E0, E1, E2);
+
+    const Eigen::Vector3d n = g.N.row(f).transpose();
+    const double inv_2a = 1.0 / (2.0 * g.A(f));
+    y(i0) += face_dual.dot(inv_2a * n.cross(E0));
+    y(i1) += face_dual.dot(inv_2a * n.cross(E1));
+    y(i2) += face_dual.dot(inv_2a * n.cross(E2));
+}
+
 } // namespace
 
-// Matrix-free operator for A = params.mass_weight * M + params.sigma * L^s
+// Matrix-free transitional operator for A = mass_weight * M + sigma * B.
+// B is the high-order term from RSu Eq. 7 / Eq. 12. The mass term is a
+// temporary regularizer; TODO 2B.2 replace it with the proper B_0 term.
 struct HsOperator : public Eigen::EigenBase<HsOperator> {
     const MeshData& mesh;
     const HsPreconditionerParams& params;
@@ -80,24 +132,25 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
     Eigen::VectorXd operator*(const Eigen::MatrixBase<Rhs>& x) const {
         const int nv = mesh.n_vertices();
         const int nf = mesh.n_faces();
-        const double power = params.s + 1.0;
-        const double eps = 1e-2 * mesh.L0 * mesh.L0;
+        const double power = params.s;
 
-        // 1. Face values: x_a = mean(x_i for i in face a)
-        Eigen::VectorXd face_x(nf);
+        // 1. Per-face gradients D_f x from RSu Sec. 3.2.1.
+        std::vector<Eigen::Vector3d> grad_face(static_cast<size_t>(nf));
         for (int i = 0; i < nf; ++i) {
-            face_x(i) = (x(mesh.F(i, 0)) + x(mesh.F(i, 1)) + x(mesh.F(i, 2))) / 3.0;
+            grad_face[static_cast<size_t>(i)] =
+                face_scalar_gradient(mesh, g, x, i);
         }
 
-        // 2. Pre-aggregate Q_U = sum_{a in U} A_a x_a
-        std::vector<double> Q(bvh.n_nodes(), 0.0);
+        // 2. Pre-aggregate Q_U = sum_{a in U} A_a D_f x(a).
+        std::vector<Eigen::Vector3d> Q(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
         for (int i = bvh.n_nodes() - 1; i >= 0; --i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
-                double sum = 0.0;
+                Eigen::Vector3d sum = Eigen::Vector3d::Zero();
                 for (int j = node.face_start; j < node.face_end; ++j) {
                     int f = bvh.face_indices[j];
-                    sum += g.A(f) * face_x(f);
+                    sum += g.A(f) * grad_face[static_cast<size_t>(f)];
                 }
                 Q[i] = sum;
             } else {
@@ -105,14 +158,18 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             }
         }
 
-        // 3. Hierarchical integral for L^s x
+        // 3. Hierarchical integral for high-order B. The BCT enumerates
+        // ordered face pairs, so each directed contribution carries the
+        // factor 2 from the ordered quadratic form's adjoint.
         std::vector<double> SumA(bvh.n_nodes(), 0.0);
-        std::vector<double> SumQ(bvh.n_nodes(), 0.0);
+        std::vector<Eigen::Vector3d> SumQ(
+            static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
         for (const auto& cp : bp.admissible) {
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
             double r2 = (U.centroid - V.centroid).squaredNorm();
-            double K = 1.0 / std::pow(r2 + eps, power);
+            if (r2 == 0.0) continue;
+            double K = 1.0 / std::pow(r2, power);
             
             // Interaction U <- V (covers directed pair)
             SumA[cp.u] += K * V.area;
@@ -130,13 +187,16 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             }
         }
 
-        Eigen::VectorXd z = Eigen::VectorXd::Zero(nf);
+        std::vector<Eigen::Vector3d> face_dual(
+            static_cast<size_t>(nf), Eigen::Vector3d::Zero());
         for (int i = 0; i < bvh.n_nodes(); ++i) {
             const BVHNode& node = bvh.nodes[i];
             if (node.is_leaf()) {
                 for (int j = node.face_start; j < node.face_end; ++j) {
                     int f = bvh.face_indices[j];
-                    z(f) = g.A(f) * (face_x(f) * SumA[i] - SumQ[i]);
+                    face_dual[static_cast<size_t>(f)] +=
+                        2.0 * g.A(f) *
+                        (grad_face[static_cast<size_t>(f)] * SumA[i] - SumQ[i]);
                 }
             }
         }
@@ -153,23 +213,28 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                     if (self && a == b) continue;
                     double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
                     if (r2 == 0.0) continue;
-                    double K = g.A(b) / std::pow(r2 + eps, power);
-                    z(a) += g.A(a) * K * (face_x(a) - face_x(b));
+                    double K = 1.0 / std::pow(r2, power);
+                    face_dual[static_cast<size_t>(a)] +=
+                        2.0 * g.A(a) * g.A(b) * K *
+                        (grad_face[static_cast<size_t>(a)] -
+                         grad_face[static_cast<size_t>(b)]);
                 }
             }
         }
 
-        // 4. Combine: y = params.mass_weight * M x + params.sigma * L^s x
+        // 4. Combine: y = mass_weight * M x + sigma * B x.
         Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);
         for (int i = 0; i < nv; ++i) {
             y(i) = params.mass_weight * hs.mass_diag(i) * x(i);
         }
 
         for (int f = 0; f < nf; ++f) {
-            double val = params.sigma * z(f) / 3.0;
-            y(mesh.F(f, 0)) += val;
-            y(mesh.F(f, 1)) += val;
-            y(mesh.F(f, 2)) += val;
+            scatter_face_gradient_adjoint(
+                mesh,
+                g,
+                f,
+                params.sigma * face_dual[static_cast<size_t>(f)],
+                y);
         }
 
         return y;
