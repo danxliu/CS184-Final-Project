@@ -1,112 +1,246 @@
+#include "BCT.h"
+#include "BVH.h"
+#include "FaceGeom.h"
+#include "HsPreconditioner.h"
 #include "MeshData.h"
-#include "PathEnergy.h"
-#include "TrustRegionSolver.h"
-#include <chrono>
+#include "ShellEnergy.h"
+#include "TPE.h"
+#include "TestMeshes.h"
+
+#include <Eigen/Dense>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
+#include <sstream>
+#include <string>
 #include <vector>
 
-using namespace rsh;
+using rsh::MeshData;
 
-MeshData merge_meshes(const MeshData& a, const MeshData& b) {
+namespace {
+
+std::string frame_path(const std::string &dir, int idx) {
+    std::ostringstream oss;
+    oss << dir << "/frame_" << std::setfill('0') << std::setw(4) << idx << ".obj";
+    return oss.str();
+}
+
+MeshData combine_meshes(const MeshData &m1, const MeshData &m2) {
     MeshData out;
-    out.V.resize(a.n_vertices() + b.n_vertices(), 3);
-    out.V << a.V, b.V;
-    
-    Eigen::MatrixXi bF = b.F.array() + a.n_vertices();
-    out.F.resize(a.n_faces() + b.n_faces(), 3);
-    out.F << a.F, bF;
+    int v1 = m1.n_vertices();
+    int v2 = m2.n_vertices();
+    int f1 = m1.n_faces();
+    int f2 = m2.n_faces();
+
+    out.V.resize(v1 + v2, 3);
+    out.V.topRows(v1) = m1.V;
+    out.V.bottomRows(v2) = m2.V;
+
+    out.F.resize(f1 + f2, 3);
+    out.F.topRows(f1) = m1.F;
+    out.F.bottomRows(f2) = m2.F.array() + v1;
+
     return out;
 }
 
-int main(int argc, char** argv) {
-    std::cout << "=== Compression Demo ===\n";
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <mesh1.obj> [mesh2.obj]\n";
-        return 1;
+} // namespace
+
+int main(int argc, char **argv) {
+    MeshData m_left, m_right;
+
+    if (argc == 3) {
+        std::cout << "Loading custom meshes: " << argv[1] << " and " << argv[2] << "\n";
+        m_left = rsh::MeshData::load_obj(argv[1]);
+        m_right = rsh::MeshData::load_obj(argv[2]);
+    } else {
+        std::cout << "Using default icosphere(2) meshes.\n";
+        m_left = rsh::make_icosphere(2);
+        m_right = rsh::make_icosphere(2);
+        
+        // Scale down the icospheres slightly if they are too big
+        m_left.V *= 0.5;
+        m_right.V *= 0.5;
     }
-    
-    MeshData mesh1 = MeshData::load_obj(argv[1]);
-    mesh1.normalize();
-    
-    MeshData mesh2 = (argc >= 3) ? MeshData::load_obj(argv[2]) : mesh1;
-    if (argc >= 3) mesh2.normalize();
-    
-    // Initial configuration: mesh1 at x=-0.5, mesh2 at x=0.5
-    MeshData m1_start = mesh1;
-    m1_start.V.col(0).array() -= 0.5;
-    
-    MeshData m2_start = mesh2;
-    m2_start.V.col(0).array() += 0.5;
-    // Rotate mesh2 so they face each other
-    for (int i = 0; i < m2_start.n_vertices(); ++i) {
-        double x = m2_start.V(i, 0) - 0.5; // relative to center
-        double z = m2_start.V(i, 2);
-        m2_start.V(i, 0) = -x + 0.5;
-        m2_start.V(i, 2) = -z;
-    }
-    
-    MeshData x0 = merge_meshes(m1_start, m2_start);
-    
-    // Final configuration: they move towards each other
-    MeshData m1_end = mesh1;
-    m1_end.V.col(0).array() -= 0.1; // intersect
-    
-    MeshData m2_end = mesh2;
-    for (int i = 0; i < m2_end.n_vertices(); ++i) {
-        double x = m2_end.V(i, 0);
-        double z = m2_end.V(i, 2);
-        m2_end.V(i, 0) = -x;
-        m2_end.V(i, 2) = -z;
-    }
-    m2_end.V.col(0).array() += 0.1;
-    
-    MeshData x_end = merge_meshes(m1_end, m2_end);
-    
-    const int num_frames = 6; 
-    std::vector<MeshData> frames(num_frames, x0);
-    
-    // Linear initialization
-    for (int i = 0; i < num_frames; ++i) {
-        float t = (float)i / (num_frames - 1);
-        frames[i].V = (1.0f - t) * x0.V + t * x_end.V;
-    }
-    
-    // Set up free vertices
-    // We want to pin the far ends of the meshes to force compression.
-    // For mesh1, pin vertices with x < -0.7. For mesh2, pin vertices with x > 0.7.
-    std::vector<bool> free_vertices(x0.n_vertices(), true);
-    for (int i = 0; i < x0.n_vertices(); ++i) {
-        if (x0.V(i, 0) < -0.7 || x0.V(i, 0) > 0.7) {
-            free_vertices[i] = false;
+
+    // Ensure meshes are separated on the X axis.
+    // Calculate bounding boxes
+    double left_max_x = m_left.V.col(0).maxCoeff();
+    double left_min_x = m_left.V.col(0).minCoeff();
+    double right_min_x = m_right.V.col(0).minCoeff();
+    double right_max_x = m_right.V.col(0).maxCoeff();
+
+    // Center them on Y and Z
+    Eigen::RowVector3d c_left = m_left.V.colwise().mean();
+    Eigen::RowVector3d c_right = m_right.V.colwise().mean();
+    m_left.V.col(1).array() -= c_left(1);
+    m_left.V.col(2).array() -= c_left(2);
+    m_right.V.col(1).array() -= c_right(1);
+    m_right.V.col(2).array() -= c_right(2);
+
+    // Translate so they face each other
+    // Left mesh ends at X = -0.1, right mesh starts at X = 0.1
+    double target_left_max_x = -0.1;
+    double target_right_min_x = 0.1;
+
+    m_left.V.col(0).array() += (target_left_max_x - left_max_x);
+    m_right.V.col(0).array() += (target_right_min_x - right_min_x);
+
+    // Recompute exact bounds
+    left_min_x = m_left.V.col(0).minCoeff();
+    right_max_x = m_right.V.col(0).maxCoeff();
+
+    // Combine meshes into the reference state
+    MeshData m_ref = combine_meshes(m_left, m_right);
+
+    // Identify handle vertices
+    double epsilon = 0.1;
+    std::vector<bool> is_handle(m_ref.n_vertices(), false);
+    int num_left_handles = 0;
+    int num_right_handles = 0;
+
+    for (int i = 0; i < m_ref.n_vertices(); ++i) {
+        double x = m_ref.V(i, 0);
+        if (x <= left_min_x + epsilon) {
+            is_handle[i] = true;
+            num_left_handles++;
+        } else if (x >= right_max_x - epsilon) {
+            is_handle[i] = true;
+            num_right_handles++;
         }
     }
-    
-    PathEnergyParams ep;
-    ep.tpe_adaptive.enabled = true;
-    ep.tpe_adaptive.max_depth = 2;
-    ep.tpe_theta = 0.5; // Ensure BCT clustering is fine enough
-    
-    TrustRegionParams tp;
-    tp.max_iters = 30; // 30 is usually enough for a demo
-    tp.max_cg_iters = 50;
-    tp.free_vertices = free_vertices;
-    
-    std::cout << "Interpolating " << num_frames << " frames...\n";
-    auto start_time = std::chrono::high_resolution_clock::now();
-    TrustRegionResult res = interpolate_geodesic_trust_region(frames, ep, tp);
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end_time - start_time;
-    
-    std::cout << "Interpolation finished in " << diff.count() << " seconds. Converged: " << res.converged 
-              << ", iters: " << res.outer_iterations << "\n";
-              
-    std::cout << "Final Energy: " << path_energy(res.frames, ep).terms.total << "\n";
 
-    for (size_t i = 0; i < res.frames.size(); ++i) {
-        std::string filename = "out_compress_" + std::to_string(i) + ".obj";
-        res.frames[i].save_obj(filename);
-        std::cout << "Saved " << filename << "\n";
-    }
+    std::cout << "Left handles: " << num_left_handles << ", Right handles: " << num_right_handles << "\n";
+
+    // Simulation parameters
+    int num_frames = 40;
+    double dx_per_frame = 0.025; // Move each side inwards by 0.025 per frame
     
+    // Optimization parameters
+    const double alpha = 6.0;
+    const double theta = 0.5;
+    const int max_inner_iters = 100;
+    const double armijo_c1 = 1e-4;
+    const double shrink = 0.5;
+    const int max_backtracks = 60;
+    const double grad_tol = 1e-4;
+    const double tpe_weight = 0.005;
+
+    rsh::ShellEnergyParams shell_params;
+    shell_params.thickness = 0.005;
+    shell_params.lambda = 1.0;
+    shell_params.mu = 1.0;
+
+    rsh::HsPreconditionerParams hs_params;
+    hs_params.s = 1.5;
+    hs_params.sigma = 1.0;
+    hs_params.mass_weight = 1.0;
+
+    const std::string out_dir = "out/compress_sequence";
+    std::filesystem::create_directories(out_dir);
+
+    MeshData m_curr = m_ref;
+    m_curr.save_obj(frame_path(out_dir, 0));
+
+    std::cout << "Starting compression simulation...\n";
+
+    for (int frame = 1; frame <= num_frames; ++frame) {
+        std::cout << "\n--- Frame " << frame << " ---\n";
+        
+        // 1. Move handles
+        for (int i = 0; i < m_curr.n_vertices(); ++i) {
+            if (is_handle[i]) {
+                if (m_curr.V(i, 0) < 0) {
+                    m_curr.V(i, 0) += dx_per_frame; // Move left handle right
+                } else {
+                    m_curr.V(i, 0) -= dx_per_frame; // Move right handle left
+                }
+            }
+        }
+
+        // 2. Relax free vertices
+        double tau = 1.0;
+        
+        for (int it = 0; it < max_inner_iters; ++it) {
+            // Compute TPE
+            const rsh::FaceGeom g = rsh::compute_face_geom(m_curr);
+            const rsh::BVH bvh = rsh::build_bvh(m_curr, g);
+            const rsh::BlockPairs bp = rsh::build_bct_self(bvh, theta);
+
+            double E_tpe = rsh::tpe_energy_bh(g, bvh, bp, alpha);
+            Eigen::MatrixXd G_tpe = rsh::tpe_gradient_bh(m_curr, g, bvh, bp, alpha);
+
+            // Compute Shell
+            rsh::ShellEnergyGradientResult shell_res = rsh::shell_energy_with_gradient(m_ref, m_curr, shell_params);
+            
+            double E_total = tpe_weight * E_tpe + shell_res.energy.total;
+            Eigen::MatrixXd G_total = tpe_weight * G_tpe + shell_res.grad_def;
+
+            // Zero out gradient on handles
+            for (int i = 0; i < m_curr.n_vertices(); ++i) {
+                if (is_handle[i]) {
+                    G_total.row(i).setZero();
+                }
+            }
+
+            double gnorm = G_total.norm();
+            if (gnorm < grad_tol) {
+                std::cout << "  [Inner " << it << "] converged! gnorm = " << gnorm << "\n";
+                break;
+            }
+
+            // Direction
+            rsh::HsDirectionResult hs_res = rsh::hs_preconditioned_direction(m_curr, G_total, hs_params);
+            Eigen::MatrixXd dir = hs_res.direction;
+
+            // Zero out direction on handles
+            for (int i = 0; i < m_curr.n_vertices(); ++i) {
+                if (is_handle[i]) {
+                    dir.row(i).setZero();
+                }
+            }
+
+            // Backtracking
+            tau = std::min(tau * 2.0, 1.0);
+            int n_bt = 0;
+            MeshData m_try = m_curr;
+            rsh::BVH bvh_try = bvh;
+            double E_new = E_total;
+            
+            for (; n_bt < max_backtracks; ++n_bt) {
+                m_try.V = m_curr.V - tau * dir;
+                
+                const rsh::FaceGeom g_try = rsh::compute_face_geom(m_try);
+                rsh::update_bvh_aggregates(bvh_try, g_try);
+                
+                double E_tpe_try = rsh::tpe_energy_bh(g_try, bvh_try, bp, alpha);
+                rsh::ShellEnergyValue shell_try = rsh::shell_energy(m_ref, m_try, shell_params);
+                
+                E_new = tpe_weight * E_tpe_try + shell_try.total;
+                
+                if (E_new <= E_total - armijo_c1 * tau * hs_res.g_dot_dir) {
+                    break;
+                }
+                tau *= shrink;
+            }
+
+            if (n_bt == max_backtracks) {
+                std::cout << "  [Inner " << it << "] Armijo failed, gnorm = " << gnorm << "\n";
+                break; // proceed to next frame
+            }
+
+            m_curr = m_try;
+            std::printf("  [Inner %2d] E = %.4e (TPE=%.4e, Shell=%.4e) |g| = %.2e tau = %.2e bt = %d\n",
+                        it, E_new, tpe_weight * E_tpe, shell_res.energy.total, gnorm, tau, n_bt);
+        }
+
+        m_curr.save_obj(frame_path(out_dir, frame));
+    }
+
+    std::cout << "\nCompression demo complete. Output saved to " << out_dir << "/\n";
     return 0;
 }
