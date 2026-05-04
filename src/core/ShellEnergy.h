@@ -21,6 +21,10 @@ struct ShellEnergyParams {
     double bending_fd_eps = 1e-6;
     // If false, use (theta_tilde - theta)^2 instead of tan-based barrier.
     bool use_tan_bending = true;
+    // If true, use the analytical bending gradient for deformed positions.
+    // The reference-position bending gradient remains finite-difference for now
+    // because rest edge lengths, rest areas, and rest dihedral all depend on it.
+    bool use_analytical_bending_gradient = true;
 };
 
 struct ShellEnergyValue {
@@ -43,7 +47,8 @@ ShellEnergyValue shell_energy(const MeshData &x_ref,
                                   ShellEnergyParams());
 
 // Energy + gradients wrt both reference and deformed positions.
-// Membrane gradient is analytical; bending gradient is finite-difference.
+// Membrane gradient is analytical. By default the deformed-position bending
+// gradient is analytical; the reference bending gradient is finite-difference.
 ShellEnergyGradientResult shell_energy_with_gradient(
     const MeshData &x_ref,
     const MeshData &x_def,

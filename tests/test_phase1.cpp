@@ -1107,6 +1107,105 @@ void test_shell_energy_positive_under_deformation() {
     check(e.total > 0.0, "Wc(x,y) > 0 for nontrivial deformation");
 }
 
+double matrix_relative_max_err(const Eigen::MatrixXd &a,
+                               const Eigen::MatrixXd &b) {
+    double max_err = 0.0;
+    double max_scale = 1.0;
+    for (int i = 0; i < a.rows(); ++i) {
+        for (int j = 0; j < a.cols(); ++j) {
+            max_err = std::max(max_err, std::abs(a(i, j) - b(i, j)));
+            max_scale = std::max(max_scale, std::abs(b(i, j)));
+        }
+    }
+    return max_err / max_scale;
+}
+
+void test_bending_gradient_analytical_matches_fd_icosphere() {
+    std::cout << "-- analytical bending gradient matches FD on perturbed icosphere --\n";
+    MeshData x = make_icosphere(2);
+    x.normalize();
+    MeshData y = x;
+
+    std::mt19937 rng(18431);
+    std::normal_distribution<double> n(0.0, 0.025);
+    for (int i = 0; i < y.n_vertices(); ++i) {
+        y.V(i, 0) += n(rng);
+        y.V(i, 1) += n(rng);
+        y.V(i, 2) += n(rng);
+    }
+
+    ShellEnergyParams params;
+    params.lambda = 0.0;
+    params.mu = 0.0;
+    params.use_tan_bending = true;
+    params.bending_fd_eps = 1e-6;
+
+    ShellEnergyParams fd_params = params;
+    fd_params.use_analytical_bending_gradient = false;
+    ShellEnergyParams analytical_params = params;
+    analytical_params.use_analytical_bending_gradient = true;
+
+    const ShellEnergyGradientResult fd =
+        shell_energy_with_gradient(x, y, fd_params);
+    const ShellEnergyGradientResult an =
+        shell_energy_with_gradient(x, y, analytical_params);
+    const double rel = matrix_relative_max_err(an.grad_def, fd.grad_def);
+    const double abs = (an.grad_def - fd.grad_def).cwiseAbs().maxCoeff();
+    std::cout << "    max abs err = " << abs
+              << ", max rel err = " << rel << "\n";
+    check(rel < 1e-5, "analytical bending grad_def matches FD (rel < 1e-5)");
+}
+
+MeshData make_hinge_mesh(double z) {
+    MeshData m;
+    m.V.resize(4, 3);
+    m.V << 0, 0, 0,
+           1, 0, 0,
+           0, 1, 0,
+           0, 0, z;
+    m.F.resize(2, 3);
+    // Faces share edge (0,1). With z=1 the normals are +z and +y, so the
+    // unsigned dihedral used by ShellEnergy is exactly pi/2.
+    m.F << 0, 1, 2,
+           1, 0, 3;
+    m.L0 = m.compute_L0();
+    return m;
+}
+
+void test_bending_gradient_hinge_directional_derivative() {
+    std::cout << "-- analytical bending gradient hinge directional derivative --\n";
+    MeshData x = make_hinge_mesh(1.0);
+    MeshData y = make_hinge_mesh(1.25);
+    y.V.row(3) += Eigen::RowVector3d(0.08, -0.04, 0.02);
+
+    ShellEnergyParams params;
+    params.lambda = 0.0;
+    params.mu = 0.0;
+    params.use_tan_bending = false;
+    params.use_analytical_bending_gradient = true;
+
+    const ShellEnergyGradientResult r = shell_energy_with_gradient(x, y, params);
+    Eigen::MatrixXd dir = Eigen::MatrixXd::Zero(y.n_vertices(), 3);
+    dir.row(3) = Eigen::RowVector3d(0.3, -0.2, 0.15);
+
+    const double h = 1e-6;
+    MeshData yp = y;
+    MeshData ym = y;
+    yp.V += h * dir;
+    ym.V -= h * dir;
+    const double fd =
+        (shell_energy(x, yp, params).bending -
+         shell_energy(x, ym, params).bending) / (2.0 * h);
+    const double analytical = (r.grad_def.array() * dir.array()).sum();
+    const double abs_err = std::abs(analytical - fd);
+    const double rel_err = abs_err / std::max({1.0, std::abs(analytical), std::abs(fd)});
+    std::cout << "    analytical = " << analytical
+              << ", FD = " << fd
+              << ", abs err = " << abs_err
+              << ", rel err = " << rel_err << "\n";
+    check(rel_err < 1e-8, "hinge bending gradient matches directional FD");
+}
+
 void test_shell_energy_gradient_fd_deformed_mesh() {
     std::cout << "-- FD check for shell energy gradients (ref/deformed vars) --\n";
     MeshData x0 = make_torus(1.0, 0.3, 10, 8);
@@ -1305,6 +1404,8 @@ int main() {
     test_tpe_adaptive_near_contact_growth();
     test_shell_energy_zero_at_identity();
     test_shell_energy_positive_under_deformation();
+    test_bending_gradient_analytical_matches_fd_icosphere();
+    test_bending_gradient_hinge_directional_derivative();
     test_shell_energy_gradient_fd_deformed_mesh();
     test_path_energy_identity_zero();
     test_path_energy_gradient_fd();

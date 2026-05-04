@@ -178,6 +178,65 @@ double dihedral_angle(const MeshData &mesh, int f0, int f1, int i, int j) {
     return std::acos(c);
 }
 
+int opposite_vertex(const MeshData &mesh, int f, int i, int j) {
+    for (int k = 0; k < 3; ++k) {
+        const int v = mesh.F(f, k);
+        if (v != i && v != j) {
+            return v;
+        }
+    }
+    return -1;
+}
+
+void add_unit_normal_dot_gradient(const Vec3 &p0,
+                                  const Vec3 &p1,
+                                  const Vec3 &p2,
+                                  const Vec3 &q,
+                                  Vec3 &g0,
+                                  Vec3 &g1,
+                                  Vec3 &g2) {
+    const Vec3 e1 = p1 - p0;
+    const Vec3 e2 = p2 - p0;
+    const Vec3 m = e1.cross(e2);
+    const double m_norm = m.norm();
+    if (!(m_norm > 0.0) || !std::isfinite(m_norm)) {
+        return;
+    }
+
+    const Vec3 n = m / m_norm;
+    const Vec3 w = (q - n * n.dot(q)) / m_norm;
+
+    g0 += (p1 - p2).cross(w);
+    g1 += e2.cross(w);
+    g2 += w.cross(e1);
+}
+
+void scatter_face_normal_dot_gradient(const MeshData &mesh,
+                                      int f,
+                                      const Vec3 &q,
+                                      std::array<Vec3, 4> &dc,
+                                      const std::array<int, 4> &verts) {
+    const int v0 = mesh.F(f, 0);
+    const int v1 = mesh.F(f, 1);
+    const int v2 = mesh.F(f, 2);
+    Vec3 g0 = Vec3::Zero();
+    Vec3 g1 = Vec3::Zero();
+    Vec3 g2 = Vec3::Zero();
+    add_unit_normal_dot_gradient(
+        mesh.V.row(v0), mesh.V.row(v1), mesh.V.row(v2), q, g0, g1, g2);
+
+    const std::array<int, 3> face_verts = {v0, v1, v2};
+    const std::array<Vec3, 3> grads = {g0, g1, g2};
+    for (int a = 0; a < 3; ++a) {
+        for (int b = 0; b < 4; ++b) {
+            if (face_verts[a] == verts[b]) {
+                dc[b] += grads[a];
+                break;
+            }
+        }
+    }
+}
+
 double bending_energy_only(const MeshData &x_ref,
                            const MeshData &x_def,
                            const ShellEnergyParams &params,
@@ -260,6 +319,110 @@ void accumulate_membrane_gradient(const MeshData &x_ref,
         grad_ref.row(i) += (params.thickness * w) * da_dvk(nr, E0);
         grad_ref.row(j) += (params.thickness * w) * da_dvk(nr, E1);
         grad_ref.row(k) += (params.thickness * w) * da_dvk(nr, E2);
+    }
+}
+
+void accumulate_bending_gradient_ref_fd(const MeshData &x_ref,
+                                        const MeshData &x_def,
+                                        const ShellEnergyParams &params,
+                                        const std::vector<BendingEdge> &edges,
+                                        Eigen::MatrixXd &grad_ref) {
+    const double eps = params.bending_fd_eps;
+    if (!(eps > 0.0)) return;
+
+    auto wb_ref_def = [&](const MeshData &xr, const MeshData &xd) -> double {
+        return bending_energy_only(xr, xd, params, edges);
+    };
+
+    MeshData xr = x_ref;
+    MeshData xd = x_def;
+    for (int v = 0; v < x_ref.n_vertices(); ++v) {
+        for (int c = 0; c < 3; ++c) {
+            const double h = eps * (1.0 + std::abs(x_ref.V(v, c)));
+
+            xr.V(v, c) += h;
+            const double ep = wb_ref_def(xr, xd);
+            xr.V(v, c) -= 2.0 * h;
+            const double em = wb_ref_def(xr, xd);
+            xr.V(v, c) += h;
+            grad_ref(v, c) += (ep - em) / (2.0 * h);
+        }
+    }
+}
+
+void accumulate_bending_gradient_analytical(const MeshData &x_ref,
+                                            const MeshData &x_def,
+                                            const ShellEnergyParams &params,
+                                            const std::vector<BendingEdge> &edges,
+                                            Eigen::MatrixXd &grad_def) {
+    const double clamp_hi = M_PI - params.angle_clamp_eps;
+    const double sin_eps = 1e-12;
+
+    for (const BendingEdge &e : edges) {
+        const int a = e.i;
+        const int b = e.j;
+        const int c = opposite_vertex(x_ref, e.f0, a, b);
+        const int d = opposite_vertex(x_ref, e.f1, a, b);
+        if (c < 0 || d < 0) {
+            continue;
+        }
+
+        const double area_e =
+            (face_area(x_ref, e.f0) + face_area(x_ref, e.f1)) / 3.0;
+        if (!(area_e > 0.0)) continue;
+        const double ell = edge_length(x_ref, a, b);
+
+        const double theta_ref = dihedral_angle(x_ref, e.f0, e.f1, a, b);
+        const double theta_def = dihedral_angle(x_def, e.f0, e.f1, a, b);
+
+        double val_ref = theta_ref;
+        double val_def = theta_def;
+        double dval_dtheta = 1.0;
+        if (params.use_tan_bending) {
+            val_ref = 2.0 * std::tan(0.5 * std::min(theta_ref, clamp_hi));
+            const double theta_eval = std::min(theta_def, clamp_hi);
+            val_def = 2.0 * std::tan(0.5 * theta_eval);
+            if (theta_def >= clamp_hi) {
+                dval_dtheta = 0.0;
+            } else {
+                const double c_half = std::cos(0.5 * theta_def);
+                dval_dtheta = 1.0 / (c_half * c_half);
+            }
+        }
+        if (dval_dtheta == 0.0) {
+            continue;
+        }
+
+        const Vec3 n0 = triangle_normal_unit(
+            x_def.V.row(x_def.F(e.f0, 0)),
+            x_def.V.row(x_def.F(e.f0, 1)),
+            x_def.V.row(x_def.F(e.f0, 2)));
+        const Vec3 n1 = triangle_normal_unit(
+            x_def.V.row(x_def.F(e.f1, 0)),
+            x_def.V.row(x_def.F(e.f1, 1)),
+            x_def.V.row(x_def.F(e.f1, 2)));
+
+        const double cos_theta =
+            std::max(-1.0, std::min(1.0, n0.dot(n1)));
+        const double sin_theta =
+            std::sqrt(std::max(0.0, 1.0 - cos_theta * cos_theta));
+        if (!(sin_theta > sin_eps) || !std::isfinite(sin_theta)) {
+            continue;
+        }
+
+        const std::array<int, 4> verts = {a, b, c, d};
+        std::array<Vec3, 4> dc = {
+            Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), Vec3::Zero()};
+        scatter_face_normal_dot_gradient(x_def, e.f0, n1, dc, verts);
+        scatter_face_normal_dot_gradient(x_def, e.f1, n0, dc, verts);
+
+        const double scale =
+            2.0 * std::pow(params.thickness, 3.0) * ell * ell / area_e *
+            (val_def - val_ref) * dval_dtheta;
+        for (int k = 0; k < 4; ++k) {
+            const Vec3 dtheta = -dc[k] / sin_theta;
+            grad_def.row(verts[k]) += (scale * dtheta).transpose();
+        }
     }
 }
 
@@ -359,8 +522,15 @@ ShellEnergyGradientResult shell_energy_with_gradient(
 
     const std::vector<BendingEdge> edges = build_interior_edges(x_ref);
     out.energy.bending = bending_energy_only(x_ref, x_def, params, edges);
-    accumulate_bending_gradient_fd(
-        x_ref, x_def, params, edges, out.grad_ref, out.grad_def);
+    if (params.use_analytical_bending_gradient) {
+        accumulate_bending_gradient_ref_fd(
+            x_ref, x_def, params, edges, out.grad_ref);
+        accumulate_bending_gradient_analytical(
+            x_ref, x_def, params, edges, out.grad_def);
+    } else {
+        accumulate_bending_gradient_fd(
+            x_ref, x_def, params, edges, out.grad_ref, out.grad_def);
+    }
 
     out.energy.total = out.energy.membrane + out.energy.bending;
     return out;
