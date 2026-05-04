@@ -34,7 +34,7 @@ struct CliOptions {
     int torus_nv = 12;
     int max_iters = 200;
     std::string out_dir = "out/gallery_genus1";
-    bool dump_every_iter = false;
+    bool dump_every_iter = true;
 };
 
 struct EnergyRow {

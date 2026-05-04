@@ -35,7 +35,7 @@ struct CliOptions {
     int subdiv = 3;
     int max_iters = 200;
     std::string out_dir = "out/gallery_genus0";
-    bool dump_every_iter = false;
+    bool dump_every_iter = true;
 };
 
 struct EnergyRow {

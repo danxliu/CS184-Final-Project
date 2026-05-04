@@ -20,16 +20,18 @@ struct OptimizeTPEParams {
     double initial_tau = 1.0;
     double tpe_alpha = 6.0;
     double bvh_theta = 0.5;
+    double remesh_energy_max_factor = 1.0e300;
     HsPreconditionerParams hs_params;
     HsConstraints constraints;
     std::string out_dir = "";
-    bool dump_every_iter = false;
+    bool dump_every_iter = true;
 };
 
 struct OptimizeTPEResult {
     MeshData final_mesh;
     int iterations_completed = 0;
     int remeshes_completed = 0;
+    int remeshes_rejected = 0;
     double final_energy = 0.0;
     double final_grad_norm = 0.0;
     std::string stop_reason = "max_iters";

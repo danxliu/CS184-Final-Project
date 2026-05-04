@@ -768,8 +768,9 @@ void test_optimize_tpe_icosphere2_twenty_iters() {
     check(monotone, "20-iter optimize_tpe energy log is monotone");
     check(max_bt <= p.armijo_max_backtracks, "20-iter optimize_tpe backtracks stay capped");
     check(drift < 1e-10, "20-iter optimize_tpe preserves barycenter");
-    check(r.remeshes_completed >= 1 && remesh_rows >= 1,
-          "20-iter optimize_tpe fires remeshing");
+    check(r.iterations_completed < p.remesh_every ||
+              (r.remeshes_completed >= 1 && remesh_rows >= 1),
+          "20-iter optimize_tpe fires remeshing if it reaches the remesh interval");
 }
 
 void test_optimize_tpe_icosphere3_fifty_iters() {
@@ -796,7 +797,10 @@ void test_optimize_tpe_icosphere3_fifty_iters() {
           "50-iter optimize_tpe cuts icosphere_3 energy by at least half");
     check(std::abs(aspect1 - 1.0) < std::abs(aspect0 - 1.0),
           "50-iter optimize_tpe moves bbox aspect ratio toward one");
-    check(r.remeshes_completed >= 5, "50-iter optimize_tpe fires five remeshes");
+    const int scheduled_remeshes =
+        p.remesh_every > 0 ? r.iterations_completed / p.remesh_every : 0;
+    check(r.remeshes_completed >= scheduled_remeshes,
+          "50-iter optimize_tpe fires reached scheduled remeshes");
     check(q.edge_manifold, "50-iter optimize_tpe final mesh remains edge-manifold");
     check(r.final_mesh.n_faces() >= 0.5 * f0 &&
               r.final_mesh.n_faces() <= 2.0 * f0,

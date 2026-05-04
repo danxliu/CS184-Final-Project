@@ -29,10 +29,11 @@ namespace rsh {
 //                     a torus handle pinch); ((1/a) d^T PS_U d)^(α/2) is a
 //                     much tighter approximation.
 //   radius          — r_U = max_{t in subtree} ||c_t - c_U||. Used by the
-//                     MAC in Phase 1.5. Computed exactly at leaves; upper-
-//                     bounded via the triangle inequality at internal nodes
-//                     (the upper bound is safe for MAC — it only makes
-//                     admissibility more conservative).
+//                     MAC in Phase 1.5 together with AABB separation.
+//                     Computed exactly at leaves; upper-bounded via the
+//                     triangle inequality at internal nodes (the upper
+//                     bound is safe for MAC — it only makes admissibility
+//                     more conservative).
 //
 // Every node (leaf or internal) carries [face_start, face_end) — a contiguous
 // range into BVH::face_indices identifying every face in its subtree. The
@@ -76,7 +77,8 @@ BVH build_bvh(const MeshData &mesh, int max_leaf_size = 8);
 // shape) fixed. Used when differentiating a BH approximation through the
 // aggregate chain rule — the partition is frozen but the aggregates must
 // respond to vertex perturbations. AABBs are NOT refreshed since they are
-// only consumed during build; the MAC in BCT.cpp uses centroids and radii.
+// consumed by BCT.cpp's AABB-distance MAC. Callers that freeze a tree for
+// derivative checks must reuse the original BCT partition.
 void update_bvh_aggregates(BVH &bvh, const FaceGeom &g);
 
 } // namespace rsh

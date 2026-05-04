@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
     // Optimization parameters
     const double alpha = 6.0;
     const double theta = 0.5;
-    const int max_inner_iters = 100;
+    const int max_inner_iters = 200;
     const double armijo_c1 = 1e-4;
     const double shrink = 0.5;
     const int max_backtracks = 60;

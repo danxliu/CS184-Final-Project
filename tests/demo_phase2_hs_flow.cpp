@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
     const double hs_s = 1.5;
     const double hs_sigma = 1.0;
     const double hs_mass_weight = 1.0;
-    const int max_iters = 1000;
+    const int max_iters = 200;
     const double armijo_c1 = 1e-4;
     const double shrink = 0.5;
     const int max_backtracks = 60;

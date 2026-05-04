@@ -8,7 +8,7 @@
 namespace rsh {
 
 struct TrustRegionParams {
-    int max_iters = 30;
+    int max_iters = 200;
     int max_cg_iters = 50;
     double grad_tol = 1e-6;
     double cg_tol = 1e-4;

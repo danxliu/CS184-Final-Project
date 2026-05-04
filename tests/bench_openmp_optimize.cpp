@@ -76,7 +76,7 @@ rsh::MeshData make_perturbed_icosphere(int subdiv) {
 
 int main(int argc, char **argv) {
     const int subdiv = parse_int_arg(argc, argv, "--subdiv", 4);
-    const int max_iters = parse_int_arg(argc, argv, "--iters", 50);
+    const int max_iters = parse_int_arg(argc, argv, "--iters", 200);
     const double initial_tau =
         parse_double_arg(argc, argv, "--initial-tau", 0.1);
 
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     params.initial_tau = initial_tau;
     params.armijo_max_backtracks = 80;
     params.out_dir = "";
-    params.dump_every_iter = false;
+    params.dump_every_iter = true;
 
 #ifdef _OPENMP
     const int omp_threads = omp_get_max_threads();

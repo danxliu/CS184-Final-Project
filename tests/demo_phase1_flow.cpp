@@ -78,7 +78,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     const double sx = 1.7, sy = 0.75, sz = 0.75;
     const double alpha = 6.0;
     const double theta = 0.5;
-    const int max_iters = 150;
+    const int max_iters = 200;
     const double armijo_c1 = 1e-4;
     const double shrink = 0.5;
     const int max_backtracks = 60;

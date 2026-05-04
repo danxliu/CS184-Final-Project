@@ -81,7 +81,9 @@ bool valid_params(const OptimizeTPEParams &p) {
            std::isfinite(p.tpe_alpha) &&
            p.tpe_alpha > 0.0 &&
            std::isfinite(p.bvh_theta) &&
-           p.bvh_theta >= 0.0;
+           p.bvh_theta >= 0.0 &&
+           std::isfinite(p.remesh_energy_max_factor) &&
+           p.remesh_energy_max_factor >= 1.0;
 }
 
 } // namespace
@@ -203,10 +205,18 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
             MeshData remeshed = remesh_full(mesh);
             normalize_to_centroid(remeshed, target_centroid);
             const double remeshed_energy = tpe_energy_current(remeshed, params);
-            mesh = remeshed;
-            trial_energy = remeshed_energy;
-            did_remesh = true;
-            ++out.remeshes_completed;
+            const double max_accepted_energy =
+                params.remesh_energy_max_factor *
+                std::max(trial_energy, std::numeric_limits<double>::min());
+            if (std::isfinite(remeshed_energy) &&
+                remeshed_energy <= max_accepted_energy) {
+                mesh = remeshed;
+                trial_energy = remeshed_energy;
+                did_remesh = true;
+                ++out.remeshes_completed;
+            } else {
+                ++out.remeshes_rejected;
+            }
         }
 
         current_energy = trial_energy;
@@ -217,14 +227,8 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
             csv.flush();
         }
         if (!params.out_dir.empty()) {
-            const bool dump_frame =
-                params.dump_every_iter || did_remesh ||
-                params.max_iters <= 1 ||
-                out.iterations_completed == params.max_iters;
-            if (dump_frame) {
-                mesh.save_obj(frame_path(params.out_dir,
-                                         out.iterations_completed));
-            }
+            mesh.save_obj(frame_path(params.out_dir,
+                                     out.iterations_completed));
         }
     }
 
