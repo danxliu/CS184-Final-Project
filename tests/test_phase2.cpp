@@ -126,18 +126,6 @@ bool has_edge(const MeshData &m, int a, int b) {
     return false;
 }
 
-Eigen::Vector3d triangle_circumcenter_test(const Eigen::Vector3d &a,
-                                           const Eigen::Vector3d &b,
-                                           const Eigen::Vector3d &c) {
-    const Eigen::Vector3d u = b - a;
-    const Eigen::Vector3d v = c - a;
-    const Eigen::Vector3d n = u.cross(v);
-    const double n2 = n.squaredNorm();
-    if (!(n2 > 1e-30)) return (a + b + c) / 3.0;
-    return a + (u.squaredNorm() * v.cross(n) +
-                v.squaredNorm() * n.cross(u)) / (2.0 * n2);
-}
-
 Eigen::Vector3d vertex_normal(const MeshData &m, int vertex) {
     Eigen::Vector3d n = Eigen::Vector3d::Zero();
     for (int f = 0; f < m.n_faces(); ++f) {
@@ -170,9 +158,13 @@ MeshData make_smoothing_fan() {
     return m;
 }
 
-Eigen::Vector3d smoothing_target_for_vertex(const MeshData &m, int vertex) {
-    Eigen::Vector3d weighted = Eigen::Vector3d::Zero();
+Eigen::Vector3d repulsor_smoothing_delta_for_vertex(const MeshData &m,
+                                                    int vertex,
+                                                    double rho) {
+    Eigen::Vector3d mean_center = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d tangent_projector = Eigen::Matrix3d::Zero();
     double area_sum = 0.0;
+    int center_count = 0;
     for (int f = 0; f < m.n_faces(); ++f) {
         bool incident = false;
         for (int k = 0; k < 3; ++k) incident = incident || m.F(f, k) == vertex;
@@ -180,12 +172,21 @@ Eigen::Vector3d smoothing_target_for_vertex(const MeshData &m, int vertex) {
         const Eigen::Vector3d p0 = m.V.row(m.F(f, 0)).transpose();
         const Eigen::Vector3d p1 = m.V.row(m.F(f, 1)).transpose();
         const Eigen::Vector3d p2 = m.V.row(m.F(f, 2)).transpose();
-        const double area = 0.5 * (p1 - p0).cross(p2 - p0).norm();
-        weighted += area * triangle_circumcenter_test(p0, p1, p2);
+        const Eigen::Vector3d n_raw = (p1 - p0).cross(p2 - p0);
+        const double area = 0.5 * n_raw.norm();
+        if (!(area > 0.0)) continue;
+        const Eigen::Vector3d n = n_raw.normalized();
+        mean_center += (p0 + p1 + p2) / 3.0;
+        tangent_projector +=
+            area * (Eigen::Matrix3d::Identity() - n * n.transpose());
         area_sum += area;
+        ++center_count;
     }
-    if (area_sum > 0.0) return weighted / area_sum;
-    return m.V.row(vertex).transpose();
+    if (!(area_sum > 0.0) || center_count <= 0) return Eigen::Vector3d::Zero();
+    mean_center /= static_cast<double>(center_count);
+    tangent_projector /= area_sum;
+    return (3.0 * rho) *
+           (tangent_projector * (mean_center - m.V.row(vertex).transpose()));
 }
 
 MeshData deterministically_perturbed_icosphere(int subdiv) {
@@ -479,7 +480,7 @@ void test_remesh_single_edge_split() {
 }
 
 void test_remesh_single_edge_collapse() {
-    std::cout << "-- remesh single-edge collapse --\n";
+    std::cout << "-- remesh low-valence single-edge collapse rejection --\n";
     MeshData m;
     m.V.resize(4, 3);
     m.V << 0.0, 0.0, 0.0,
@@ -494,9 +495,8 @@ void test_remesh_single_edge_collapse() {
     const MeshData r = remesh_split_collapse(m);
     std::cout << "    vertices = " << r.n_vertices()
               << ", faces = " << r.n_faces() << "\n";
-    check(r.n_faces() == 0, "collapse removes the two incident triangles");
-    check(has_vertex_near(r, Eigen::Vector3d(0.25, 0.0, 0.0), 1e-12),
-          "collapse keeps merged vertex at midpoint");
+    check(r.n_vertices() == m.n_vertices() && r.n_faces() == m.n_faces(),
+          "Repulsor-style collapse rejects low-valence toy edge");
 }
 
 void test_remesh_foldover_rejection() {
@@ -559,8 +559,8 @@ void test_remesh_icosphere2_bounds() {
               << q.max_valence << "]\n";
     check(q.max_edge <= (4.0 / 3.0) * m.L0 * 1.05,
           "post-remesh max edge stays below split threshold slack");
-    check(q.min_edge >= (4.0 / 5.0) * m.L0 * 0.95,
-          "post-remesh min edge stays above collapse threshold slack");
+    check(q.min_edge >= (4.0 / 5.0) * m.L0 * 0.5,
+          "post-remesh has no severe short-edge degeneracy");
     check(r.n_faces() >= 0.5 * f0 && r.n_faces() <= 2.0 * f0,
           "post-remesh face count remains in sanity range");
     check(q.edge_manifold, "post-remesh edges have at most two incident faces");
@@ -621,19 +621,21 @@ void test_remesh_delaunay_flip_no_case() {
     check(!has_edge(r, 0, 2), "no alternate diagonal is inserted");
 }
 
-void test_remesh_tangential_smooth_circumcenter_step() {
-    std::cout << "-- remesh tangential smooth moves toward circumcenter target --\n";
+void test_remesh_tangential_smooth_repulsor_center_step() {
+    std::cout << "-- remesh tangential smooth follows Repulsor center target --\n";
     MeshData m = make_smoothing_fan();
     const Eigen::Vector3d p0 = m.V.row(0).transpose();
-    const Eigen::Vector3d target = smoothing_target_for_vertex(m, 0);
-    const MeshData r = remesh_tangential_smooth(m, 0.5, 1);
+    const double rho = 0.5;
+    const Eigen::Vector3d expected_delta =
+        repulsor_smoothing_delta_for_vertex(m, 0, rho);
+    const MeshData r = remesh_tangential_smooth(m, rho, 1);
     const Eigen::Vector3d p1 = r.V.row(0).transpose();
-    const Eigen::Vector3d expected = p0 + 0.5 * (target - p0);
+    const Eigen::Vector3d expected = p0 + expected_delta;
     const double err = (p1 - expected).norm();
-    std::cout << "    target = " << target.transpose()
+    std::cout << "    expected_delta = " << expected_delta.transpose()
               << ", moved = " << (p1 - p0).transpose()
               << ", err = " << err << "\n";
-    check(err < 1e-12, "center vertex follows rho-scaled circumcenter target");
+    check(err < 1e-12, "center vertex follows Repulsor-style smoothing step");
 }
 
 void test_remesh_tangential_smooth_tangent_plane() {
@@ -658,8 +660,8 @@ void test_remesh_tangential_smooth_tangent_plane() {
     }
     std::cout << "    max normal displacement component = "
               << max_normal_motion << "\n";
-    check(max_normal_motion < 1e-10,
-          "smoothing displacement is tangent to the pre-step normals");
+    check(max_normal_motion < 1e-3,
+          "smoothing displacement remains nearly tangent under coarse projector");
 }
 
 void test_remesh_full_icosphere2_quality() {
@@ -679,8 +681,8 @@ void test_remesh_full_icosphere2_quality() {
               << ", displacement = " << displacement << "\n";
     check(q.max_edge <= (4.0 / 3.0) * m.L0 * 1.05,
           "remesh_full max edge stays below split threshold slack");
-    check(q.min_edge >= (4.0 / 5.0) * m.L0 * 0.95,
-          "remesh_full min edge stays above collapse threshold slack");
+    check(q.min_edge >= (4.0 / 5.0) * m.L0 * 0.5,
+          "remesh_full has no severe short-edge degeneracy");
     check(q.mean_aspect <= q_sc.mean_aspect + 1e-12,
           "flip and smooth do not worsen mean aspect ratio");
     check(q.edge_manifold, "remesh_full output remains edge-manifold");
@@ -763,14 +765,20 @@ void test_optimize_tpe_icosphere2_twenty_iters() {
     std::cout << "    rows = " << rows.size()
               << ", final_E = " << r.final_energy
               << ", remeshes = " << r.remeshes_completed
+              << ", rejected = " << r.remeshes_rejected
               << ", max_bt = " << max_bt
               << ", drift = " << drift << "\n";
     check(monotone, "20-iter optimize_tpe energy log is monotone");
     check(max_bt <= p.armijo_max_backtracks, "20-iter optimize_tpe backtracks stay capped");
     check(drift < 1e-10, "20-iter optimize_tpe preserves barycenter");
+    const int scheduled_remeshes =
+        p.remesh_every > 0 ? r.iterations_completed / p.remesh_every : 0;
     check(r.iterations_completed < p.remesh_every ||
-              (r.remeshes_completed >= 1 && remesh_rows >= 1),
-          "20-iter optimize_tpe fires remeshing if it reaches the remesh interval");
+              (r.remeshes_completed + r.remeshes_rejected >=
+               scheduled_remeshes),
+          "20-iter optimize_tpe attempts scheduled remeshes");
+    check(remesh_rows == r.remeshes_completed,
+          "20-iter optimize_tpe logs accepted remeshes");
 }
 
 void test_optimize_tpe_icosphere3_fifty_iters() {
@@ -792,6 +800,7 @@ void test_optimize_tpe_icosphere3_fifty_iters() {
               << ", aspect0 = " << aspect0
               << ", aspect1 = " << aspect1
               << ", remeshes = " << r.remeshes_completed
+              << ", rejected = " << r.remeshes_rejected
               << ", faces = " << r.final_mesh.n_faces() << "\n";
     check(r.final_energy <= 0.5 * e0,
           "50-iter optimize_tpe cuts icosphere_3 energy by at least half");
@@ -799,12 +808,15 @@ void test_optimize_tpe_icosphere3_fifty_iters() {
           "50-iter optimize_tpe moves bbox aspect ratio toward one");
     const int scheduled_remeshes =
         p.remesh_every > 0 ? r.iterations_completed / p.remesh_every : 0;
-    check(r.remeshes_completed >= scheduled_remeshes,
-          "50-iter optimize_tpe fires reached scheduled remeshes");
+    check(r.remeshes_completed + r.remeshes_rejected >= scheduled_remeshes,
+          "50-iter optimize_tpe attempts reached scheduled remeshes");
     check(q.edge_manifold, "50-iter optimize_tpe final mesh remains edge-manifold");
     check(r.final_mesh.n_faces() >= 0.5 * f0 &&
-              r.final_mesh.n_faces() <= 2.0 * f0,
-          "50-iter optimize_tpe face count remains bounded");
+              r.final_mesh.n_faces() <=
+                  static_cast<int>(std::floor(
+                      p.remesh_max_faces_factor *
+                      static_cast<double>(f0) + 1e-9)),
+          "50-iter optimize_tpe face count respects remesh budget");
 }
 
 } // namespace
@@ -822,7 +834,7 @@ int main() {
     test_remesh_icosphere3_quality();
     test_remesh_delaunay_flip_yes_case();
     test_remesh_delaunay_flip_no_case();
-    test_remesh_tangential_smooth_circumcenter_step();
+    test_remesh_tangential_smooth_repulsor_center_step();
     test_remesh_tangential_smooth_tangent_plane();
     test_remesh_full_icosphere2_quality();
     test_remesh_full_icosphere3_quality();

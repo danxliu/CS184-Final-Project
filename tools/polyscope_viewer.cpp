@@ -46,6 +46,17 @@ std::vector<std::array<size_t, 3>> face_indices(const rsh::MeshData &mesh) {
     return out;
 }
 
+bool same_topology(const rsh::MeshData &a, const rsh::MeshData &b) {
+    if (a.n_vertices() != b.n_vertices() || a.n_faces() != b.n_faces()) {
+        return false;
+    }
+    if (a.F.rows() != b.F.rows() || a.F.cols() != b.F.cols()) {
+        return false;
+    }
+    return (a.F.array() == b.F.array()).all();
+}
+
+// First-time registration; sets material/color/etc. once.
 void register_mesh(const rsh::MeshData &mesh,
                    const std::string &name,
                    const std::string &label) {
@@ -62,6 +73,22 @@ void register_mesh(const rsh::MeshData &mesh,
     polyscope::requestRedraw();
     std::cout << "loaded " << label << "  vertices=" << mesh.n_vertices()
               << " faces=" << mesh.n_faces() << "\n";
+}
+
+// Update vertex positions in-place. Topology must match the original
+// registration. Avoids triggering extent recomputation, which would
+// re-fit the camera and mask translational motion across frames.
+void update_mesh_positions(const rsh::MeshData &mesh,
+                           const std::string &name) {
+    auto *ps_mesh = polyscope::getSurfaceMesh(name);
+    ps_mesh->updateVertexPositions(vertex_positions(mesh));
+    polyscope::requestRedraw();
+}
+
+void set_mesh_enabled(const std::string &name, bool enabled) {
+    if (!polyscope::hasSurfaceMesh(name)) return;
+    polyscope::getSurfaceMesh(name)->setEnabled(enabled);
+    polyscope::requestRedraw();
 }
 
 // Static obstacle mesh dumped alongside the frames (e.g. capsule tube
@@ -139,6 +166,8 @@ int main(int argc, char **argv) {
         // Frame-mode state lives at function scope so polyscope::show()'s
         // userCallback (which captures by reference) outlives its first fire.
         std::vector<FrameData> frames;
+        rsh::MeshData registered_mesh;
+        std::string registered_mesh_name = mesh_name;
         int active_frame = 0;
         bool playing = false;
         float fps = 12.0f;
@@ -153,15 +182,38 @@ int main(int argc, char **argv) {
             frames = load_frames(paths);
             register_obstacle(input / "obstacle.obj");
 
+            // First registration sets up material + camera fit on the
+            // initial frame. Frames with unchanged topology update positions
+            // in place so translational motion remains visible. Remeshed
+            // frames must be re-registered because Polyscope validates both
+            // topology and vertex-array sizes.
+            register_mesh(frames[0].mesh, mesh_name,
+                          frames[0].path.filename().string());
+            registered_mesh = frames[0].mesh;
+            registered_mesh_name = mesh_name;
+
             auto show_frame = [&](int frame_idx) {
                 active_frame = std::clamp(frame_idx,
                                           0,
                                           static_cast<int>(frames.size()) - 1);
-                register_mesh(frames[static_cast<size_t>(active_frame)].mesh,
-                              mesh_name,
-                              frames[static_cast<size_t>(active_frame)]
-                                  .path.filename()
-                                  .string());
+                const FrameData &frame =
+                    frames[static_cast<size_t>(active_frame)];
+                if (same_topology(registered_mesh, frame.mesh)) {
+                    update_mesh_positions(frame.mesh, registered_mesh_name);
+                } else {
+                    set_mesh_enabled(registered_mesh_name, false);
+                    registered_mesh_name =
+                        mesh_name + "_frame_" + std::to_string(active_frame);
+                    if (polyscope::hasSurfaceMesh(registered_mesh_name)) {
+                        set_mesh_enabled(registered_mesh_name, true);
+                        update_mesh_positions(frame.mesh, registered_mesh_name);
+                    } else {
+                        register_mesh(frame.mesh,
+                                      registered_mesh_name,
+                                      frame.path.filename().string());
+                    }
+                    registered_mesh = frame.mesh;
+                }
             };
 
             show_frame(0);

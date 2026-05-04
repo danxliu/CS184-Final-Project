@@ -17,6 +17,14 @@ struct PathEnergyParams {
     double tpe_alpha = 6.0;
     double tpe_theta = 0.5;
     TpeAdaptiveParams tpe_adaptive;
+    // Optional fixed obstacle surface. When non-null, a symmetrized
+    // surface-to-surface tangent-point barrier Phi_barrier is added to the
+    // graph-manifold potential:
+    //   Phi_total = TPE + tpe_barrier_weight * Phi_barrier.
+    // This matches the RS Fig. 4 "barrier with a hole" treatment more closely
+    // than a vertex SDF penalty.
+    const MeshData *tpe_barrier_mesh = nullptr;
+    double tpe_barrier_weight = 1.0;
     // Optional analytic obstacle. When non-null, its vertex barrier is added
     // to the graph-manifold potential:
     //   Phi_total = TPE + obstacle_weight * Phi_obstacle.

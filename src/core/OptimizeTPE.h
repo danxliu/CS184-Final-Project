@@ -21,6 +21,8 @@ struct OptimizeTPEParams {
     double tpe_alpha = 6.0;
     double bvh_theta = 0.5;
     double remesh_energy_max_factor = 1.0e300;
+    double remesh_max_faces_factor = 1.15;
+    double remesh_max_step_faces_factor = 1.05;
     HsPreconditionerParams hs_params;
     HsConstraints constraints;
     std::string out_dir = "";
@@ -32,6 +34,8 @@ struct OptimizeTPEResult {
     int iterations_completed = 0;
     int remeshes_completed = 0;
     int remeshes_rejected = 0;
+    int remeshes_rejected_energy = 0;
+    int remeshes_rejected_face_budget = 0;
     double final_energy = 0.0;
     double final_grad_norm = 0.0;
     std::string stop_reason = "max_iters";

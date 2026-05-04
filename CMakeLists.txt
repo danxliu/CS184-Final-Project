@@ -43,6 +43,7 @@ set(RSH_CORE_SOURCES
     src/core/FaceGeom.cpp
     src/core/ShellEnergy.cpp
     src/core/PathEnergy.cpp
+    src/core/SurfaceBarrier.cpp
     src/core/TrustRegionSolver.cpp
     src/core/ExtrapolationSolver.cpp
     src/core/Constraints.cpp
@@ -175,6 +176,10 @@ target_link_libraries(demo_compression PRIVATE rsh_core)
 
 add_executable(demo_phase3_ball_tube tests/demo_phase3_ball_tube.cpp)
 target_link_libraries(demo_phase3_ball_tube PRIVATE rsh_core)
+
+add_executable(demo_phase3_ball_tube_interp
+    tests/demo_phase3_ball_tube_interp.cpp)
+target_link_libraries(demo_phase3_ball_tube_interp PRIVATE rsh_core)
 
 add_executable(bench_openmp_optimize tests/bench_openmp_optimize.cpp)
 target_link_libraries(bench_openmp_optimize PRIVATE rsh_core)

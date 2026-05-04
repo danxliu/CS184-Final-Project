@@ -3,9 +3,22 @@
 
 #include "PathEnergy.h"
 
+#include <functional>
 #include <vector>
 
 namespace rsh {
+
+struct TrustRegionIterationInfo {
+    int iteration = 0;
+    double energy = 0.0;
+    double trial_energy = 0.0;
+    double grad_norm = 0.0;
+    double radius = 0.0;
+    double step_norm = 0.0;
+    double rho = 0.0;
+    bool accepted = false;
+    bool converged = false;
+};
 
 struct TrustRegionParams {
     int max_iters = 200;
@@ -18,6 +31,8 @@ struct TrustRegionParams {
     double hvp_eps = 1e-5;
     std::vector<bool> free_vertices;
     bool optimize_end_frame = false;
+    std::function<void(const TrustRegionIterationInfo &,
+                       const std::vector<MeshData> &)> iteration_callback;
 };
 
 struct TrustRegionResult {

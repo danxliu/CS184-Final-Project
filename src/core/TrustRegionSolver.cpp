@@ -324,6 +324,16 @@ TrustRegionResult interpolate_geodesic_trust_region(
         const double gnorm = cur.grad.norm();
         if (gnorm < tr_params.grad_tol) {
             out.converged = true;
+            if (tr_params.iteration_callback) {
+                TrustRegionIterationInfo info;
+                info.iteration = it + 1;
+                info.energy = cur.energy;
+                info.trial_energy = cur.energy;
+                info.grad_norm = gnorm;
+                info.radius = radius;
+                info.converged = true;
+                tr_params.iteration_callback(info, out.frames);
+            }
             break;
         }
 
@@ -368,6 +378,20 @@ TrustRegionResult interpolate_geodesic_trust_region(
         std::cout << "[TrustRegion] Iteration " << it + 1 << "/" << tr_params.max_iters 
                   << " finished in " << diff.count() << " seconds (Accepted step: " 
                   << (accepted ? "Yes" : "No") << ")\n";
+
+        if (tr_params.iteration_callback) {
+            TrustRegionIterationInfo info;
+            info.iteration = it + 1;
+            info.energy = cur.energy;
+            info.trial_energy = e_trial;
+            info.grad_norm = gnorm;
+            info.radius = radius;
+            info.step_norm = s.norm();
+            info.rho = rho;
+            info.accepted = accepted;
+            info.converged = false;
+            tr_params.iteration_callback(info, out.frames);
+        }
 
         if (radius < 1e-12) break;
     }

@@ -52,8 +52,13 @@ void remove_scale_mode(const Eigen::MatrixXd &V, Eigen::MatrixXd &field) {
     }
 }
 
-void normalize_to_centroid(MeshData &mesh, const Eigen::RowVector3d &centroid) {
+void normalize_to_centroid(MeshData &mesh,
+                           const Eigen::RowVector3d &centroid,
+                           double target_l0) {
     mesh.normalize();
+    if (target_l0 > 0.0) {
+        mesh.L0 = target_l0;
+    }
     mesh.V.rowwise() += centroid;
 }
 
@@ -83,7 +88,20 @@ bool valid_params(const OptimizeTPEParams &p) {
            std::isfinite(p.bvh_theta) &&
            p.bvh_theta >= 0.0 &&
            std::isfinite(p.remesh_energy_max_factor) &&
-           p.remesh_energy_max_factor >= 1.0;
+           p.remesh_energy_max_factor >= 1.0 &&
+           std::isfinite(p.remesh_max_faces_factor) &&
+           p.remesh_max_faces_factor >= 1.0 &&
+           std::isfinite(p.remesh_max_step_faces_factor) &&
+           p.remesh_max_step_faces_factor >= 1.0;
+}
+
+int scaled_face_budget(int n_faces, double factor) {
+    if (n_faces <= 0) return 0;
+    const double budget = factor * static_cast<double>(n_faces);
+    if (budget >= static_cast<double>(std::numeric_limits<int>::max())) {
+        return std::numeric_limits<int>::max();
+    }
+    return std::max(n_faces, static_cast<int>(std::floor(budget + 1e-9)));
 }
 
 } // namespace
@@ -114,6 +132,13 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
     MeshData mesh = initial;
     out.final_mesh = mesh;
     const Eigen::RowVector3d target_centroid = mesh.V.colwise().mean();
+    const double target_l0 =
+        mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();
+    if (target_l0 > 0.0) {
+        mesh.L0 = target_l0;
+        out.final_mesh.L0 = target_l0;
+    }
+    const int initial_face_count = mesh.n_faces();
 
     std::ofstream csv;
     if (!params.out_dir.empty()) {
@@ -121,13 +146,15 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
         remove_stale_outputs(params.out_dir);
         mesh.save_obj(frame_path(params.out_dir, 0));
         csv.open(params.out_dir + "/energy.csv");
-        csv << "iter,energy,grad_norm,step_size,n_backtracks,did_remesh\n";
+        csv << "iter,energy,grad_norm,step_size,n_backtracks,did_remesh,"
+               "n_vertices,n_faces\n";
     }
 
     double current_energy = tpe_energy_current(mesh, params);
     double current_grad_norm = 0.0;
     if (csv.is_open()) {
-        csv << "0," << current_energy << ",0,0,0,0\n";
+        csv << "0," << current_energy << ",0,0,0,0,"
+            << mesh.n_vertices() << "," << mesh.n_faces() << "\n";
         csv.flush();
     }
 
@@ -177,7 +204,7 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
         for (; n_backtracks < params.armijo_max_backtracks; ++n_backtracks) {
             trial = mesh;
             trial.V = mesh.V - tau * direction;
-            normalize_to_centroid(trial, target_centroid);
+            normalize_to_centroid(trial, target_centroid, target_l0);
             trial_energy = tpe_energy_current(trial, params);
             if (trial_energy <=
                 current_energy - params.armijo_c1 * tau * g_dot_dir) {
@@ -202,20 +229,36 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
         bool did_remesh = false;
         if (params.remesh_every > 0 &&
             out.iterations_completed % params.remesh_every == 0) {
-            MeshData remeshed = remesh_full(mesh);
-            normalize_to_centroid(remeshed, target_centroid);
+            const int max_faces_from_initial =
+                scaled_face_budget(initial_face_count,
+                                   params.remesh_max_faces_factor);
+            const int max_faces_from_step =
+                scaled_face_budget(mesh.n_faces(),
+                                   params.remesh_max_step_faces_factor);
+            const int max_accepted_faces =
+                std::min(max_faces_from_initial, max_faces_from_step);
+            MeshData remeshed = remesh_full(mesh, max_accepted_faces);
+            normalize_to_centroid(remeshed, target_centroid, target_l0);
             const double remeshed_energy = tpe_energy_current(remeshed, params);
             const double max_accepted_energy =
                 params.remesh_energy_max_factor *
                 std::max(trial_energy, std::numeric_limits<double>::min());
+            const bool face_budget_ok =
+                remeshed.n_faces() <= max_accepted_faces;
             if (std::isfinite(remeshed_energy) &&
-                remeshed_energy <= max_accepted_energy) {
+                remeshed_energy <= max_accepted_energy &&
+                face_budget_ok) {
                 mesh = remeshed;
                 trial_energy = remeshed_energy;
                 did_remesh = true;
                 ++out.remeshes_completed;
             } else {
                 ++out.remeshes_rejected;
+                if (!face_budget_ok) {
+                    ++out.remeshes_rejected_face_budget;
+                } else {
+                    ++out.remeshes_rejected_energy;
+                }
             }
         }
 
@@ -223,7 +266,8 @@ OptimizeTPEResult optimize_tpe(const MeshData &initial,
         if (csv.is_open()) {
             csv << out.iterations_completed << "," << current_energy << ","
                 << current_grad_norm << "," << tau << "," << n_backtracks
-                << "," << (did_remesh ? 1 : 0) << "\n";
+                << "," << (did_remesh ? 1 : 0) << ","
+                << mesh.n_vertices() << "," << mesh.n_faces() << "\n";
             csv.flush();
         }
         if (!params.out_dir.empty()) {

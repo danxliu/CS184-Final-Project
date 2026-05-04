@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <set>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -62,22 +61,79 @@ int get_midpoint(int a, int b,
     return idx;
 }
 
-int closest_face_to_point(const MeshData &mesh, const Eigen::Vector3d &target) {
-    int best_face = -1;
-    double best_d2 = std::numeric_limits<double>::infinity();
-    for (int f = 0; f < mesh.n_faces(); ++f) {
-        Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
-        for (int k = 0; k < 3; ++k) {
-            centroid += mesh.V.row(mesh.F(f, k)).transpose();
+int wrap_index(int i, int n) {
+    int out = i % n;
+    if (out < 0) out += n;
+    return out;
+}
+
+int torus_grid_index(int i, int j, int nu, int nv) {
+    return wrap_index(i, nu) * nv + wrap_index(j, nv);
+}
+
+std::array<int, 6> torus_vertex_star_boundary(int i,
+                                              int j,
+                                              int nu,
+                                              int nv) {
+    // Boundary of the triangulated one-ring after removing vertex (i,j) and
+    // its incident faces. The diagonal edges follow make_torus()'s quad split.
+    return {
+        torus_grid_index(i,     j - 1, nu, nv),
+        torus_grid_index(i + 1, j,     nu, nv),
+        torus_grid_index(i + 1, j + 1, nu, nv),
+        torus_grid_index(i,     j + 1, nu, nv),
+        torus_grid_index(i - 1, j,     nu, nv),
+        torus_grid_index(i - 1, j - 1, nu, nv),
+    };
+}
+
+bool face_uses_removed_vertex(const Eigen::Vector3i &face,
+                              const std::vector<char> &removed) {
+    return removed[static_cast<size_t>(face[0])] ||
+           removed[static_cast<size_t>(face[1])] ||
+           removed[static_cast<size_t>(face[2])];
+}
+
+std::array<int, 6> remapped_cap_loop(int torus,
+                                     const std::array<int, 6> &local_loop,
+                                     int base_nv,
+                                     const std::vector<int> &remap) {
+    std::array<int, 6> out;
+    const int offset = torus * base_nv;
+    for (int k = 0; k < 6; ++k) {
+        const int mapped = remap[static_cast<size_t>(offset + local_loop[k])];
+        if (mapped < 0) {
+            throw std::runtime_error(
+                "make_n_torus: cap boundary touched a removed vertex");
         }
-        centroid /= 3.0;
-        const double d2 = (centroid - target).squaredNorm();
-        if (d2 < best_d2) {
-            best_d2 = d2;
-            best_face = f;
+        out[k] = mapped;
+    }
+    return out;
+}
+
+std::array<int, 6> best_aligned_loop(const std::array<int, 6> &a,
+                                     const std::array<int, 6> &b,
+                                     const Eigen::MatrixXd &V) {
+    std::array<int, 6> best = b;
+    double best_cost = std::numeric_limits<double>::infinity();
+    for (int reversed = 0; reversed < 2; ++reversed) {
+        for (int shift = 0; shift < 6; ++shift) {
+            std::array<int, 6> candidate;
+            double cost = 0.0;
+            for (int k = 0; k < 6; ++k) {
+                const int idx = reversed
+                                    ? wrap_index(shift - k, 6)
+                                    : wrap_index(shift + k, 6);
+                candidate[k] = b[static_cast<size_t>(idx)];
+                cost += (V.row(a[k]) - V.row(candidate[k])).squaredNorm();
+            }
+            if (cost < best_cost) {
+                best_cost = cost;
+                best = candidate;
+            }
         }
     }
-    return best_face;
+    return best;
 }
 
 } // namespace
@@ -177,76 +233,92 @@ MeshData make_n_torus(int genus,
     const MeshData base = make_torus(R, r, nu_per_torus, nv);
     const int base_nv = base.n_vertices();
     const int base_nf = base.n_faces();
-    const int right_face =
-        closest_face_to_point(base, Eigen::Vector3d(R + r, 0.0, 0.0));
-    const int left_face =
-        closest_face_to_point(base, Eigen::Vector3d(-(R + r), 0.0, 0.0));
-    if (right_face < 0 || left_face < 0 || right_face == left_face) {
-        throw std::runtime_error("make_n_torus: failed to choose bridge caps");
+    const int total_base_vertices = genus * base_nv;
+    const int right_i = 0;
+    const int left_i = nu_per_torus / 2;
+    const int cap_j = 0;
+    const int right_cap_vertex =
+        torus_grid_index(right_i, cap_j, nu_per_torus, nv);
+    const int left_cap_vertex =
+        torus_grid_index(left_i, cap_j, nu_per_torus, nv);
+    if (right_cap_vertex == left_cap_vertex) {
+        throw std::runtime_error("make_n_torus: cap vertices overlap");
     }
 
-    struct Bridge {
-        int left_torus = 0;
-        int right_torus = 0;
-        Eigen::Vector3i left_loop = Eigen::Vector3i::Zero();
-        Eigen::Vector3i right_loop = Eigen::Vector3i::Zero();
-    };
+    const std::array<int, 6> right_loop_local =
+        torus_vertex_star_boundary(right_i, cap_j, nu_per_torus, nv);
+    const std::array<int, 6> left_loop_local =
+        torus_vertex_star_boundary(left_i, cap_j, nu_per_torus, nv);
 
-    std::vector<std::set<int>> omitted_faces(static_cast<size_t>(genus));
-    std::vector<Bridge> bridges;
-    bridges.reserve(static_cast<size_t>(genus - 1));
-    for (int k = 0; k + 1 < genus; ++k) {
-        omitted_faces[static_cast<size_t>(k)].insert(right_face);
-        omitted_faces[static_cast<size_t>(k + 1)].insert(left_face);
-        Bridge bridge;
-        bridge.left_torus = k;
-        bridge.right_torus = k + 1;
-        bridge.left_loop = base.F.row(right_face).transpose();
-        bridge.right_loop = base.F.row(left_face).transpose();
-        bridges.push_back(bridge);
+    std::vector<std::vector<char>> removed(
+        static_cast<size_t>(genus),
+        std::vector<char>(static_cast<size_t>(base_nv), 0));
+    for (int torus = 0; torus < genus; ++torus) {
+        if (torus + 1 < genus) {
+            removed[static_cast<size_t>(torus)]
+                   [static_cast<size_t>(right_cap_vertex)] = 1;
+        }
+        if (torus > 0) {
+            removed[static_cast<size_t>(torus)]
+                   [static_cast<size_t>(left_cap_vertex)] = 1;
+        }
     }
 
-    const double bridge_gap = 4.0 * r / static_cast<double>(nu_per_torus);
+    const double bridge_gap = std::max(2.0 * r,
+                                       8.0 * r /
+                                           static_cast<double>(nu_per_torus));
     const double spacing = 2.0 * (R + r) + bridge_gap;
 
     MeshData mesh;
-    mesh.V.resize(genus * base_nv, 3);
     mesh.N.resize(0, 3);
+    std::vector<Eigen::RowVector3d> vertices;
+    vertices.reserve(static_cast<size_t>(total_base_vertices));
+    std::vector<int> remap(static_cast<size_t>(total_base_vertices), -1);
     for (int torus = 0; torus < genus; ++torus) {
         const Eigen::RowVector3d shift(torus * spacing, 0.0, 0.0);
         const int offset = torus * base_nv;
+        const auto &removed_torus = removed[static_cast<size_t>(torus)];
         for (int v = 0; v < base_nv; ++v) {
-            mesh.V.row(offset + v) = base.V.row(v) + shift;
+            if (removed_torus[static_cast<size_t>(v)]) continue;
+            remap[static_cast<size_t>(offset + v)] =
+                static_cast<int>(vertices.size());
+            vertices.push_back(base.V.row(v) + shift);
         }
+    }
+
+    mesh.V.resize(static_cast<int>(vertices.size()), 3);
+    for (int v = 0; v < static_cast<int>(vertices.size()); ++v) {
+        mesh.V.row(v) = vertices[static_cast<size_t>(v)];
     }
 
     std::vector<Eigen::Vector3i> faces;
-    faces.reserve(static_cast<size_t>(genus * base_nf + 6 * (genus - 1)));
+    faces.reserve(static_cast<size_t>(genus * (base_nf - 12) +
+                                      12 * (genus - 1)));
     for (int torus = 0; torus < genus; ++torus) {
         const int offset = torus * base_nv;
-        const auto &omit = omitted_faces[static_cast<size_t>(torus)];
+        const auto &removed_torus = removed[static_cast<size_t>(torus)];
         for (int f = 0; f < base_nf; ++f) {
-            if (omit.find(f) != omit.end()) continue;
-            faces.push_back(base.F.row(f).transpose() +
-                            Eigen::Vector3i::Constant(offset));
+            const Eigen::Vector3i local_face = base.F.row(f).transpose();
+            if (face_uses_removed_vertex(local_face, removed_torus)) continue;
+            const int a = remap[static_cast<size_t>(offset + local_face[0])];
+            const int b = remap[static_cast<size_t>(offset + local_face[1])];
+            const int c = remap[static_cast<size_t>(offset + local_face[2])];
+            if (a < 0 || b < 0 || c < 0) {
+                throw std::runtime_error(
+                    "make_n_torus: invalid remap for retained face");
+            }
+            faces.emplace_back(a, b, c);
         }
     }
 
-    for (const Bridge &bridge : bridges) {
-        std::array<int, 3> a = {
-            bridge.left_torus * base_nv + bridge.left_loop[0],
-            bridge.left_torus * base_nv + bridge.left_loop[1],
-            bridge.left_torus * base_nv + bridge.left_loop[2],
-        };
-        const std::array<int, 3> b_removed = {
-            bridge.right_torus * base_nv + bridge.right_loop[0],
-            bridge.right_torus * base_nv + bridge.right_loop[1],
-            bridge.right_torus * base_nv + bridge.right_loop[2],
-        };
-        const std::array<int, 3> b = {b_removed[0], b_removed[2],
-                                      b_removed[1]};
-        for (int i = 0; i < 3; ++i) {
-            const int j = (i + 1) % 3;
+    for (int bridge = 0; bridge + 1 < genus; ++bridge) {
+        const std::array<int, 6> a =
+            remapped_cap_loop(bridge, right_loop_local, base_nv, remap);
+        const std::array<int, 6> b_raw =
+            remapped_cap_loop(bridge + 1, left_loop_local, base_nv, remap);
+        const std::array<int, 6> b = best_aligned_loop(a, b_raw, mesh.V);
+        for (int i = 0; i < 6; ++i) {
+            const int j = (i + 1) % 6;
             faces.emplace_back(a[i], a[j], b[j]);
             faces.emplace_back(a[i], b[j], b[i]);
         }

@@ -2,6 +2,7 @@
 #include "MeshData.h"
 #include "Obstacle.h"
 #include "PathEnergy.h"
+#include "SurfaceBarrier.h"
 #include "TestMeshes.h"
 
 #include <Eigen/Dense>
@@ -220,6 +221,38 @@ void test_obstacle_energy_gradient_fd() {
           "obstacle energy gradient matches central FD");
 }
 
+void test_surface_tpe_barrier_gradient_fd() {
+    std::cout << "-- surface TPE barrier gradient FD check --\n";
+    MeshData mesh = make_icosphere(0);
+    mesh.normalize();
+    mesh.V.rowwise() += Eigen::RowVector3d(1.3, 0.08, -0.03);
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.55;
+    barrier.L0 = barrier.compute_L0();
+
+    const Eigen::VectorXd x = flatten_matrix(mesh.V);
+    GradCheckResult r = finite_diff_gradient_check(
+        [&](const Eigen::VectorXd &v) {
+            return surface_tpe_barrier_energy(
+                with_vertices(mesh, v), barrier, 6.0);
+        },
+        [&](const Eigen::VectorXd &v) {
+            return flatten_matrix(surface_tpe_barrier_gradient(
+                with_vertices(mesh, v), barrier, 6.0));
+        },
+        x,
+        1e-6);
+
+    std::cout << "    max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index << "\n";
+    check(r.pass(1e-4),
+          "surface TPE barrier gradient matches central FD");
+}
+
 void test_barrier_divergence() {
     std::cout << "-- obstacle barrier divergence near contact --\n";
 
@@ -335,10 +368,78 @@ void test_path_energy_with_obstacle() {
         1e-5);
 
     std::cout << "    frame-1 grad: max abs err = " << r.max_abs_err
-              << ", max rel err = " << r.max_rel_err << "\n";
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index;
+    if (r.worst_index >= 0) {
+        std::cout << ", analytical = " << r.analytical[r.worst_index]
+                  << ", numerical = " << r.numerical[r.worst_index];
+    }
+    std::cout << "\n";
     check(r.pass(1e-4),
           "path-energy gradient with obstacle graph potential matches central FD");
     (void)nv;
+}
+
+void test_path_energy_with_surface_tpe_barrier() {
+    std::cout << "-- path-energy with surface TPE barrier --\n";
+    MeshData x0 = make_icosphere(0);
+    x0.normalize();
+    x0.V.rowwise() += Eigen::RowVector3d(1.35, 0.04, 0.02);
+    x0.L0 = x0.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.55;
+    barrier.L0 = barrier.compute_L0();
+
+    std::vector<MeshData> frames(3, x0);
+    frames[1].V.col(1).array() += 0.04;
+    frames[2].V.col(0).array() += 0.08;
+    for (MeshData &f : frames) f.L0 = f.compute_L0();
+
+    PathEnergyParams params;
+    params.tpe_barrier_mesh = &barrier;
+    params.tpe_barrier_weight = 1.0;
+    params.tpe_alpha = 6.0;
+    params.tpe_theta = 0.0;
+    params.shell.thickness = 0.0;
+
+    const std::vector<PathEnergyFrameCache> frozen_cache =
+        build_path_energy_frame_cache(frames, params);
+
+    const PathEnergyResult same = path_energy({x0, x0}, params);
+    check(std::isfinite(same.terms.obstacle_sum) &&
+              same.terms.obstacle_sum > 0.0 &&
+              std::abs(same.terms.total) < 1e-10,
+          "constant surface TPE barrier does not add ordinary path energy");
+
+    GradCheckResult r = finite_diff_gradient_check(
+        [&](const Eigen::VectorXd &z) {
+            std::vector<MeshData> f = frames;
+            f[1].V = unflatten_vertices(z);
+            f[1].L0 = f[1].compute_L0();
+            return path_energy(f, params, &frozen_cache).terms.total;
+        },
+        [&](const Eigen::VectorXd &z) {
+            std::vector<MeshData> f = frames;
+            f[1].V = unflatten_vertices(z);
+            f[1].L0 = f[1].compute_L0();
+            return flatten_matrix(path_energy_with_gradient(f, params,
+                                                            &frozen_cache)
+                                      .grad_frames[1]);
+        },
+        flatten_matrix(frames[1].V),
+        1e-6);
+    std::cout << "    frame-1 grad: max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index;
+    if (r.worst_index >= 0) {
+        std::cout << ", analytical = " << r.analytical[r.worst_index]
+                  << ", numerical = " << r.numerical[r.worst_index];
+    }
+    std::cout << "\n";
+    check(r.pass(1e-4),
+          "path-energy surface TPE barrier gradient matches central FD");
 }
 
 void test_infeasibility_signal() {
@@ -361,8 +462,10 @@ int main() {
     test_sdf_hand_cases();
     test_sdf_gradient_fd();
     test_obstacle_energy_gradient_fd();
+    test_surface_tpe_barrier_gradient_fd();
     test_barrier_divergence();
     test_path_energy_with_obstacle();
+    test_path_energy_with_surface_tpe_barrier();
     test_infeasibility_signal();
 
     if (failures == 0) {

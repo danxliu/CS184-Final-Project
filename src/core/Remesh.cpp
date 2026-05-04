@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <map>
 #include <set>
 #include <vector>
@@ -22,6 +23,8 @@ struct MeshState {
     std::vector<Eigen::Vector3i> F;
     std::vector<bool> is_new_vertex;
 };
+
+constexpr int kMaxSimplexValence = 9;
 
 std::pair<int, int> ordered_edge(int a, int b) {
     if (a > b) std::swap(a, b);
@@ -107,6 +110,111 @@ std::vector<int> vertex_valences(const MeshState &state) {
     return val;
 }
 
+std::vector<int> vertex_simplex_valences(const MeshState &state) {
+    std::vector<int> val(state.V.size(), 0);
+    for (const Eigen::Vector3i &f : state.F) {
+        ++val[static_cast<size_t>(f[0])];
+        ++val[static_cast<size_t>(f[1])];
+        ++val[static_cast<size_t>(f[2])];
+    }
+    return val;
+}
+
+bool contains_vertex(const Eigen::Vector3i &f, int v) {
+    return f[0] == v || f[1] == v || f[2] == v;
+}
+
+std::set<int> vertex_neighbors(const MeshState &state, int v) {
+    std::set<int> out;
+    for (const Eigen::Vector3i &f : state.F) {
+        if (!contains_vertex(f, v)) continue;
+        for (int k = 0; k < 3; ++k) {
+            if (f[k] != v) out.insert(f[k]);
+        }
+    }
+    return out;
+}
+
+std::vector<int> edge_parent_faces(const MeshState &state, int a, int b) {
+    std::vector<int> out;
+    for (int i = 0; i < static_cast<int>(state.F.size()); ++i) {
+        const Eigen::Vector3i &f = state.F[static_cast<size_t>(i)];
+        if (contains_vertex(f, a) && contains_vertex(f, b)) {
+            out.push_back(i);
+        }
+    }
+    return out;
+}
+
+std::set<int> edge_opposite_vertices(const MeshState &state,
+                                     const std::vector<int> &edge_faces,
+                                     int a,
+                                     int b) {
+    std::set<int> out;
+    for (int face_id : edge_faces) {
+        const Eigen::Vector3i &f = state.F[static_cast<size_t>(face_id)];
+        for (int k = 0; k < 3; ++k) {
+            if (f[k] != a && f[k] != b) out.insert(f[k]);
+        }
+    }
+    return out;
+}
+
+int openmesh_face_valence(const OMesh &om, OMesh::VertexHandle vh) {
+    int valence = 0;
+    for (auto vf_it = om.cvf_iter(vh); vf_it.is_valid(); ++vf_it) {
+        ++valence;
+    }
+    return valence;
+}
+
+std::vector<OMesh::VertexHandle> openmesh_opposite_vertices(const OMesh &om,
+                                                            OMesh::EdgeHandle eh) {
+    std::vector<OMesh::VertexHandle> out;
+    for (int side = 0; side < 2; ++side) {
+        const auto heh = om.halfedge_handle(eh, side);
+        if (!heh.is_valid()) continue;
+        if (!om.face_handle(heh).is_valid()) continue;
+        const auto opp = om.opposite_vh(heh);
+        if (opp.is_valid()) out.push_back(opp);
+    }
+    return out;
+}
+
+bool split_topology_ok(const OMesh &om,
+                       OMesh::EdgeHandle eh,
+                       const std::vector<char> &blocked) {
+    if (!eh.is_valid()) return false;
+
+    const std::vector<OMesh::VertexHandle> opposite =
+        openmesh_opposite_vertices(om, eh);
+    for (const auto opp : opposite) {
+        if (!opp.is_valid()) return false;
+        const int idx = opp.idx();
+        if (idx < 0 || idx >= static_cast<int>(blocked.size())) {
+            return false;
+        }
+        if (blocked[static_cast<size_t>(idx)]) {
+            return false;
+        }
+        if (openmesh_face_valence(om, opp) + 1 > kMaxSimplexValence) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int split_face_delta(const OMesh &om, OMesh::EdgeHandle eh) {
+    int delta = 0;
+    for (int side = 0; side < 2; ++side) {
+        const auto heh = om.halfedge_handle(eh, side);
+        if (heh.is_valid() && om.face_handle(heh).is_valid()) {
+            ++delta;
+        }
+    }
+    return delta;
+}
+
 bool manifold_faces_ok(const MeshState &state) {
     std::map<std::pair<int, int>, int> edge_count;
     std::set<std::array<int, 3>> face_keys;
@@ -160,8 +268,41 @@ MeshState compact_state(const MeshState &state, int preserve_vertex) {
     return out;
 }
 
-bool contains_vertex(const Eigen::Vector3i &f, int v) {
-    return f[0] == v || f[1] == v || f[2] == v;
+bool collapse_topology_ok(const MeshState &state, int a, int b) {
+    const std::vector<int> simplex_val = vertex_simplex_valences(state);
+    if (simplex_val[static_cast<size_t>(a)] <= 3 ||
+        simplex_val[static_cast<size_t>(b)] <= 3) {
+        return false;
+    }
+
+    const std::vector<int> edge_faces = edge_parent_faces(state, a, b);
+    if (edge_faces.size() != 2) {
+        return false;
+    }
+
+    const int expected_valence =
+        simplex_val[static_cast<size_t>(a)] +
+        simplex_val[static_cast<size_t>(b)] -
+        static_cast<int>(edge_faces.size()) - 2;
+    if (expected_valence > kMaxSimplexValence) {
+        return false;
+    }
+
+    const std::set<int> opposite =
+        edge_opposite_vertices(state, edge_faces, a, b);
+    for (int v : opposite) {
+        if (simplex_val[static_cast<size_t>(v)] <= 3) {
+            return false;
+        }
+    }
+
+    std::set<int> common;
+    const std::set<int> nbr_a = vertex_neighbors(state, a);
+    const std::set<int> nbr_b = vertex_neighbors(state, b);
+    std::set_intersection(nbr_a.begin(), nbr_a.end(),
+                          nbr_b.begin(), nbr_b.end(),
+                          std::inserter(common, common.begin()));
+    return common == opposite;
 }
 
 bool collapse_candidate(const MeshState &state,
@@ -170,6 +311,9 @@ bool collapse_candidate(const MeshState &state,
                         MeshState &out) {
     if (a < 0 || b < 0 || a >= static_cast<int>(state.V.size()) ||
         b >= static_cast<int>(state.V.size()) || a == b) {
+        return false;
+    }
+    if (!collapse_topology_ok(state, a, b)) {
         return false;
     }
 
@@ -236,7 +380,7 @@ bool collapse_candidate(const MeshState &state,
         // Complete removal of a tiny isolated component is allowed by the
         // collapse primitive tests; production closed surfaces keep valence > 0.
         if (vv == 0) continue;
-        if (vv < 4 || vv > 9) {
+        if (vv < 4 || vv > kMaxSimplexValence) {
             return false;
         }
     }
@@ -288,12 +432,18 @@ MeshData to_meshdata(const MeshState &state, double target_l0, bool compute_norm
     return out;
 }
 
-void split_long_edges(OMesh &om, double split_threshold) {
+void split_long_edges(OMesh &om, double split_threshold, int max_faces) {
     constexpr int kMaxSplitPasses = 8;
     for (int pass = 0; pass < kMaxSplitPasses; ++pass) {
+        if (max_faces > 0 &&
+            static_cast<int>(om.n_faces()) >= max_faces) {
+            return;
+        }
+
         struct SplitEdge {
             int a;
             int b;
+            double length;
         };
         std::vector<SplitEdge> edges;
         for (auto e_it = om.edges_begin(); e_it != om.edges_end(); ++e_it) {
@@ -304,15 +454,24 @@ void split_long_edges(OMesh &om, double split_threshold) {
             const auto p1 = om.point(vh1);
             const Eigen::Vector3d d(p0[0] - p1[0], p0[1] - p1[1], p0[2] - p1[2]);
             if (d.norm() > split_threshold) {
-                edges.push_back({vh0.idx(), vh1.idx()});
+                edges.push_back({vh0.idx(), vh1.idx(), d.norm()});
             }
         }
         if (edges.empty()) return;
+        std::sort(edges.begin(), edges.end(),
+                  [](const SplitEdge &x, const SplitEdge &y) {
+                      return x.length > y.length;
+                  });
 
         bool split_any = false;
+        std::vector<char> blocked(static_cast<size_t>(om.n_vertices()), 0);
         for (const SplitEdge &e : edges) {
             if (e.a >= static_cast<int>(om.n_vertices()) ||
                 e.b >= static_cast<int>(om.n_vertices())) {
+                continue;
+            }
+            if (blocked[static_cast<size_t>(e.a)] ||
+                blocked[static_cast<size_t>(e.b)]) {
                 continue;
             }
             const auto va = OMesh::VertexHandle(e.a);
@@ -320,6 +479,15 @@ void split_long_edges(OMesh &om, double split_threshold) {
             auto heh = om.find_halfedge(va, vb);
             if (!heh.is_valid()) heh = om.find_halfedge(vb, va);
             if (!heh.is_valid()) continue;
+            const auto eh = om.edge_handle(heh);
+            if (!split_topology_ok(om, eh, blocked)) continue;
+            if (max_faces > 0) {
+                const int delta = split_face_delta(om, eh);
+                if (delta <= 0 ||
+                    static_cast<int>(om.n_faces()) + delta > max_faces) {
+                    continue;
+                }
+            }
 
             const auto pa = om.point(va);
             const auto pb = om.point(vb);
@@ -329,7 +497,14 @@ void split_long_edges(OMesh &om, double split_threshold) {
                 0.5 * (pa[0] + pb[0]),
                 0.5 * (pa[1] + pb[1]),
                 0.5 * (pa[2] + pb[2]));
-            om.split(om.edge_handle(heh), mid);
+            const int old_vertex_count = static_cast<int>(om.n_vertices());
+            om.split(eh, mid);
+            blocked.resize(static_cast<size_t>(om.n_vertices()), 0);
+            blocked[static_cast<size_t>(e.a)] = 1;
+            blocked[static_cast<size_t>(e.b)] = 1;
+            for (int v = old_vertex_count; v < static_cast<int>(om.n_vertices()); ++v) {
+                blocked[static_cast<size_t>(v)] = 1;
+            }
             split_any = true;
         }
         if (!split_any) return;
@@ -337,7 +512,7 @@ void split_long_edges(OMesh &om, double split_threshold) {
 }
 
 void collapse_short_edges(MeshState &state, double collapse_threshold) {
-    constexpr int kMaxCollapsePasses = 32;
+    constexpr int kMaxCollapsePasses = 8;
     for (int pass = 0; pass < kMaxCollapsePasses; ++pass) {
         std::vector<Edge> edges = collect_edges(state);
         std::sort(edges.begin(), edges.end(), [](const Edge &x, const Edge &y) {
@@ -403,20 +578,6 @@ bool is_non_delaunay_edge(const OMesh &om, OMesh::EdgeHandle eh) {
     return a0 + a1 > M_PI + 1e-12;
 }
 
-Eigen::Vector3d triangle_circumcenter(const Eigen::Vector3d &a,
-                                      const Eigen::Vector3d &b,
-                                      const Eigen::Vector3d &c) {
-    const Eigen::Vector3d u = b - a;
-    const Eigen::Vector3d v = c - a;
-    const Eigen::Vector3d n = u.cross(v);
-    const double n2 = n.squaredNorm();
-    if (!(n2 > 1e-30)) {
-        return (a + b + c) / 3.0;
-    }
-    return a + (u.squaredNorm() * v.cross(n) +
-                v.squaredNorm() * n.cross(u)) / (2.0 * n2);
-}
-
 std::vector<std::vector<int>> incident_faces(const MeshData &mesh) {
     std::vector<std::vector<int>> inc(static_cast<size_t>(mesh.n_vertices()));
     for (int f = 0; f < mesh.n_faces(); ++f) {
@@ -447,7 +608,7 @@ std::vector<char> boundary_vertices(const MeshData &mesh) {
 
 } // namespace
 
-MeshData remesh_split_collapse(const MeshData &mesh) {
+MeshData remesh_split_collapse(const MeshData &mesh, int max_faces) {
     const double target_l0 = mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();
     if (!(target_l0 > 0.0) || mesh.n_faces() == 0) {
         MeshData out = mesh;
@@ -460,16 +621,14 @@ MeshData remesh_split_collapse(const MeshData &mesh) {
     const int original_vertex_count = mesh.n_vertices();
     const bool had_normals = mesh.N.rows() == mesh.V.rows();
 
-    OMesh om = mesh.to_openmesh();
-    split_long_edges(om, split_threshold);
-
-    MeshData after_split = MeshData::from_openmesh(om);
-    after_split.L0 = target_l0;
-
-    MeshState state = from_meshdata(after_split, original_vertex_count);
+    MeshState state = from_meshdata(mesh, original_vertex_count);
     collapse_short_edges(state, collapse_threshold);
 
-    return to_meshdata(state, target_l0, had_normals);
+    MeshData after_collapse = to_meshdata(state, target_l0, had_normals);
+    OMesh om = after_collapse.to_openmesh();
+    split_long_edges(om, split_threshold, max_faces);
+
+    return finalize_meshdata(MeshData::from_openmesh(om), target_l0, had_normals);
 }
 
 MeshData remesh_delaunay_flip(const MeshData &mesh, int max_passes) {
@@ -521,9 +680,10 @@ MeshData remesh_tangential_smooth(const MeshData &mesh,
                 continue;
             }
 
-            Eigen::Vector3d weighted_center = Eigen::Vector3d::Zero();
-            Eigen::Vector3d normal = Eigen::Vector3d::Zero();
+            Eigen::Vector3d mean_center = Eigen::Vector3d::Zero();
+            Eigen::Matrix3d tangent_projector = Eigen::Matrix3d::Zero();
             double area_sum = 0.0;
+            int center_count = 0;
             for (int f : inc[static_cast<size_t>(v)]) {
                 const Eigen::Vector3d p0 = out.V.row(out.F(f, 0)).transpose();
                 const Eigen::Vector3d p1 = out.V.row(out.F(f, 1)).transpose();
@@ -531,17 +691,21 @@ MeshData remesh_tangential_smooth(const MeshData &mesh,
                 const Eigen::Vector3d n_raw = (p1 - p0).cross(p2 - p0);
                 const double area = 0.5 * n_raw.norm();
                 if (!(area > 0.0)) continue;
-                weighted_center += area * triangle_circumcenter(p0, p1, p2);
-                normal += n_raw;
+                const Eigen::Vector3d n = n_raw.normalized();
+                mean_center += (p0 + p1 + p2) / 3.0;
+                tangent_projector +=
+                    area * (Eigen::Matrix3d::Identity() - n * n.transpose());
                 area_sum += area;
+                ++center_count;
             }
-            const double nn = normal.norm();
-            if (!(area_sum > 0.0) || !(nn > 0.0)) continue;
+            if (!(area_sum > 0.0) || center_count <= 0) continue;
 
-            const Eigen::Vector3d target = weighted_center / area_sum;
-            const Eigen::Vector3d n = normal / nn;
-            Eigen::Vector3d delta = rho * (target - out.V.row(v).transpose());
-            delta -= delta.dot(n) * n;
+            mean_center /= static_cast<double>(center_count);
+            tangent_projector /= area_sum;
+            const Eigen::Vector3d delta =
+                (3.0 * rho) *
+                (tangent_projector *
+                 (mean_center - out.V.row(v).transpose()));
             next.row(v) += delta.transpose();
         }
         out.V = std::move(next);
@@ -550,8 +714,8 @@ MeshData remesh_tangential_smooth(const MeshData &mesh,
     return finalize_meshdata(out, target_l0, had_normals);
 }
 
-MeshData remesh_full(const MeshData &mesh) {
-    MeshData out = remesh_split_collapse(mesh);
+MeshData remesh_full(const MeshData &mesh, int max_faces) {
+    MeshData out = remesh_split_collapse(mesh, max_faces);
     out = remesh_delaunay_flip(out);
     out = remesh_tangential_smooth(out);
     out.L0 = mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();

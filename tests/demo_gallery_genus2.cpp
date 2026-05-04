@@ -42,6 +42,8 @@ struct CliOptions {
     int torus_nu = 18;
     int torus_nv = 10;
     int max_iters = 200;
+    bool remesh = true;
+    int remesh_every = 10;
     std::string out_dir =
         std::string("out/gallery_genus") +
         std::to_string(RSH_GALLERY_DEFAULT_GENUS);
@@ -123,6 +125,14 @@ CliOptions parse_args(int argc, char **argv) {
             opts.max_iters = parse_int_value(argc, argv, i, arg, "--max-iters");
         } else if (arg == "--out-dir" || arg.rfind("--out-dir=", 0) == 0) {
             opts.out_dir = parse_string_value(argc, argv, i, arg, "--out-dir");
+        } else if (arg == "--remesh") {
+            opts.remesh = true;
+        } else if (arg == "--no-remesh") {
+            opts.remesh = false;
+        } else if (arg == "--remesh-every" ||
+                   arg.rfind("--remesh-every=", 0) == 0) {
+            opts.remesh_every =
+                parse_int_value(argc, argv, i, arg, "--remesh-every");
         } else if (arg == "--dump-every-iter") {
             opts.dump_every_iter = true;
         } else {
@@ -139,6 +149,12 @@ CliOptions parse_args(int argc, char **argv) {
     }
     if (opts.max_iters < 0) {
         throw std::runtime_error("--max-iters must be nonnegative");
+    }
+    if (opts.remesh_every < 0) {
+        throw std::runtime_error("--remesh-every must be nonnegative");
+    }
+    if (opts.remesh_every == 0) {
+        opts.remesh = false;
     }
     return opts;
 }
@@ -295,6 +311,7 @@ int main(int argc, char **argv) {
 
         rsh::OptimizeTPEParams params;
         params.max_iters = opts.max_iters;
+        params.remesh_every = opts.remesh ? opts.remesh_every : 0;
         params.out_dir = opts.out_dir;
         params.dump_every_iter = opts.dump_every_iter;
         params.constraints.pin_barycenter = true;
@@ -347,6 +364,8 @@ int main(int argc, char **argv) {
                   << ",final_faces=" << result.final_mesh.n_faces()
                   << ",face_count_ratio=" << face_count_ratio
                   << ",omp_threads=" << omp_threads
+                  << ",remesh_enabled=" << (opts.remesh ? 1 : 0)
+                  << ",remesh_every=" << params.remesh_every
                   << ",initial_energy=" << e0
                   << ",final_energy=" << result.final_energy
                   << ",initial_bbox_extents=(" << ext0(0) << ";" << ext0(1)
@@ -355,6 +374,9 @@ int main(int argc, char **argv) {
                   << ";" << ext1(2) << ")"
                   << ",iterations=" << result.iterations_completed
                   << ",remeshes=" << result.remeshes_completed
+                  << ",remeshes_rejected=" << result.remeshes_rejected
+                  << ",remeshes_rejected_face_budget="
+                  << result.remeshes_rejected_face_budget
                   << ",frames=" << n_frames
                   << ",stop_reason=" << result.stop_reason
                   << ",optimize_seconds=" << optimize_seconds

@@ -4,6 +4,7 @@
 #include "BVH.h"
 #include "FaceGeom.h"
 #include "Obstacle.h"
+#include "SurfaceBarrier.h"
 
 #include <chrono>
 #include <iostream>
@@ -100,9 +101,22 @@ std::vector<FrameEval> build_frame_eval(
             }
         }
         fe.phi = fe.tpe_phi;
+        if (params.tpe_barrier_mesh != nullptr) {
+            const double barrier_phi = surface_tpe_barrier_energy(
+                frames[k], *params.tpe_barrier_mesh, params.tpe_alpha);
+            fe.obstacle_phi += barrier_phi;
+            fe.phi += params.tpe_barrier_weight * barrier_phi;
+            if (with_gradient) {
+                fe.grad_phi += params.tpe_barrier_weight *
+                               surface_tpe_barrier_gradient(
+                                   frames[k], *params.tpe_barrier_mesh,
+                                   params.tpe_alpha);
+            }
+        }
         if (params.obstacle != nullptr) {
-            fe.obstacle_phi = obstacle_energy(frames[k], *params.obstacle);
-            fe.phi += params.obstacle_weight * fe.obstacle_phi;
+            const double sdf_phi = obstacle_energy(frames[k], *params.obstacle);
+            fe.obstacle_phi += sdf_phi;
+            fe.phi += params.obstacle_weight * sdf_phi;
             if (with_gradient) {
                 fe.grad_phi += params.obstacle_weight *
                                obstacle_gradient(frames[k], *params.obstacle);
@@ -158,7 +172,7 @@ PathEnergyResult path_energy(const std::vector<MeshData> &frames,
     for (size_t k = 0; k < fe.size(); ++k) out.phi_per_frame[k] = fe[k].phi;
 
     if (n >= 1) {
-        if (params.obstacle != nullptr) {
+        if (params.obstacle != nullptr || params.tpe_barrier_mesh != nullptr) {
             for (const FrameEval &frame : fe) {
                 out.terms.obstacle_sum += frame.obstacle_phi;
             }
@@ -203,7 +217,7 @@ PathEnergyGradientResult path_energy_with_gradient(
     }
 
     if (n >= 1) {
-        if (params.obstacle != nullptr) {
+        if (params.obstacle != nullptr || params.tpe_barrier_mesh != nullptr) {
             for (const FrameEval &frame : fe) {
                 out.energy.terms.obstacle_sum += frame.obstacle_phi;
             }
