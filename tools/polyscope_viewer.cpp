@@ -119,17 +119,21 @@ int main(int argc, char **argv) {
         polyscope::init();
 
         const std::string mesh_name = "mesh";
+        // Frame-mode state lives at function scope so polyscope::show()'s
+        // userCallback (which captures by reference) outlives its first fire.
+        std::vector<FrameData> frames;
+        int active_frame = 0;
+        bool playing = false;
+        float fps = 12.0f;
+        auto last_tick = std::chrono::steady_clock::now();
+
         if (std::filesystem::is_directory(input)) {
             const std::vector<std::filesystem::path> paths = frame_paths(input);
             if (paths.empty()) {
                 throw std::runtime_error("directory has no frame_XXXX.obj files: " +
                                          input.string());
             }
-            std::vector<FrameData> frames = load_frames(paths);
-            int active_frame = 0;
-            bool playing = false;
-            float fps = 12.0f;
-            auto last_tick = std::chrono::steady_clock::now();
+            frames = load_frames(paths);
 
             auto show_frame = [&](int frame_idx) {
                 active_frame = std::clamp(frame_idx,
@@ -144,7 +148,7 @@ int main(int argc, char **argv) {
 
             show_frame(0);
             polyscope::options::alwaysRedraw = true;
-            polyscope::state::userCallback = [&]() {
+            polyscope::state::userCallback = [&, show_frame, input]() {
                 int requested_frame = active_frame;
                 ImGui::Text("source: %s", input.string().c_str());
                 ImGui::Text("frame: %s",
@@ -189,6 +193,7 @@ int main(int argc, char **argv) {
         }
 
         polyscope::show();
+        polyscope::state::userCallback = nullptr;
         polyscope::shutdown();
     } catch (const std::exception &e) {
         std::cerr << "polyscope_viewer: " << e.what() << "\n";
