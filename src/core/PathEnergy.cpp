@@ -19,6 +19,8 @@ struct FrameEval {
     BVH bvh;
     BlockPairs bp;
     TpeAdaptiveCache cache;
+    double tpe_phi = 0.0;
+    double obstacle_phi = 0.0;
     double phi = 0.0;
     Eigen::MatrixXd grad_phi;
 };
@@ -60,7 +62,7 @@ std::vector<FrameEval> build_frame_eval(
             fe.bp = fc.bp;
             fe.cache = fc.adaptive_cache;
             if (params.tpe_adaptive.enabled && fc.has_adaptive) {
-                fe.phi = tpe_energy_bh(
+                fe.tpe_phi = tpe_energy_bh(
                     frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
                     params.tpe_alpha, &fe.cache);
                 if (with_gradient) {
@@ -69,7 +71,7 @@ std::vector<FrameEval> build_frame_eval(
                         params.tpe_alpha, &fe.cache);
                 }
             } else {
-                fe.phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
+                fe.tpe_phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
                 if (with_gradient) {
                     fe.grad_phi = tpe_gradient_bh(
                         frames[k], fe.g, fe.bvh, fe.bp, params.tpe_alpha);
@@ -81,7 +83,7 @@ std::vector<FrameEval> build_frame_eval(
             if (params.tpe_adaptive.enabled) {
                 fe.cache = build_tpe_adaptive_cache(
                     frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive);
-                fe.phi = tpe_energy_bh(
+                fe.tpe_phi = tpe_energy_bh(
                     frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
                     params.tpe_alpha, &fe.cache);
                 if (with_gradient) {
@@ -90,11 +92,20 @@ std::vector<FrameEval> build_frame_eval(
                         params.tpe_alpha, &fe.cache);
                 }
             } else {
-                fe.phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
+                fe.tpe_phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
                 if (with_gradient) {
                     fe.grad_phi = tpe_gradient_bh(
                         frames[k], fe.g, fe.bvh, fe.bp, params.tpe_alpha);
                 }
+            }
+        }
+        fe.phi = fe.tpe_phi;
+        if (params.obstacle != nullptr) {
+            fe.obstacle_phi = obstacle_energy(frames[k], *params.obstacle);
+            fe.phi += params.obstacle_weight * fe.obstacle_phi;
+            if (with_gradient) {
+                fe.grad_phi += params.obstacle_weight *
+                               obstacle_gradient(frames[k], *params.obstacle);
             }
         }
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -147,6 +158,11 @@ PathEnergyResult path_energy(const std::vector<MeshData> &frames,
     for (size_t k = 0; k < fe.size(); ++k) out.phi_per_frame[k] = fe[k].phi;
 
     if (n >= 1) {
+        if (params.obstacle != nullptr) {
+            for (const FrameEval &frame : fe) {
+                out.terms.obstacle_sum += frame.obstacle_phi;
+            }
+        }
         for (int k = 1; k <= n; ++k) {
             const ShellEnergyValue w =
                 shell_energy(frames[static_cast<size_t>(k - 1)],
@@ -155,15 +171,8 @@ PathEnergyResult path_energy(const std::vector<MeshData> &frames,
             out.terms.shell_sum += w.total;
             out.terms.repulsive_sum += dphi * dphi;
         }
-        if (params.obstacle != nullptr) {
-            for (size_t k = 0; k < frames.size(); ++k) {
-                out.terms.obstacle_sum +=
-                    obstacle_energy(frames[k], *params.obstacle);
-            }
-        }
         out.terms.total = scale *
-            (out.terms.shell_sum + out.terms.repulsive_sum +
-             out.terms.obstacle_sum);
+            (out.terms.shell_sum + out.terms.repulsive_sum);
     }
     return out;
 }
@@ -194,6 +203,11 @@ PathEnergyGradientResult path_energy_with_gradient(
     }
 
     if (n >= 1) {
+        if (params.obstacle != nullptr) {
+            for (const FrameEval &frame : fe) {
+                out.energy.terms.obstacle_sum += frame.obstacle_phi;
+            }
+        }
         for (int k = 1; k <= n; ++k) {
             const int km1 = k - 1;
             const ShellEnergyGradientResult sw =
@@ -212,19 +226,9 @@ PathEnergyGradientResult path_energy_with_gradient(
                 scale * (-2.0 * dphi) * fe[static_cast<size_t>(k)].grad_phi;
         }
 
-        if (params.obstacle != nullptr) {
-            for (size_t k = 0; k < frames.size(); ++k) {
-                out.energy.terms.obstacle_sum +=
-                    obstacle_energy(frames[k], *params.obstacle);
-                out.grad_frames[k] +=
-                    scale * obstacle_gradient(frames[k], *params.obstacle);
-            }
-        }
-
         out.energy.terms.total = scale *
             (out.energy.terms.shell_sum +
-             out.energy.terms.repulsive_sum +
-             out.energy.terms.obstacle_sum);
+             out.energy.terms.repulsive_sum);
     }
     return out;
 }

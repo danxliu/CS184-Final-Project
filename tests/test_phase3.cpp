@@ -91,6 +91,20 @@ void test_sdf_hand_cases() {
     check(close(capsule.signed_distance({0.0, 0.0, 2.0}), 0.5),
           "capsule upper endpoint distance");
 
+    HollowTubeObstacle tube(Eigen::Vector3d::Zero(),
+                            Eigen::Vector3d::UnitX(),
+                            1.0,
+                            0.5,
+                            0.8);
+    check(close(tube.signed_distance({0.0, 0.0, 0.0}), 0.5),
+          "hollow tube centerline is feasible channel");
+    check(close(tube.signed_distance({0.0, 0.6, 0.0}), -0.1),
+          "hollow tube wall interior is infeasible");
+    check(close(tube.signed_distance({0.0, 1.0, 0.0}), 0.2),
+          "hollow tube outside radius distance");
+    check(close(tube.signed_distance({1.3, 0.6, 0.0}), 0.3),
+          "hollow tube end distance through wall annulus");
+
     BoxObstacle box(Eigen::Vector3d::Zero(), {1.0, 1.0, 1.0});
     check(close(box.signed_distance({2.0, 0.0, 0.0}), 1.0),
           "box face distance");
@@ -125,6 +139,13 @@ void test_sdf_gradient_fd() {
                           Eigen::Vector3d(-0.2, 0.1, -0.5),
                           Eigen::Vector3d(0.3, -0.4, 0.8),
                           0.35)});
+    shapes.push_back({"hollow tube",
+                      std::make_unique<HollowTubeObstacle>(
+                          Eigen::Vector3d(0.1, -0.2, 0.2),
+                          Eigen::Vector3d(1.0, 0.2, -0.1),
+                          0.9,
+                          0.45,
+                          0.75)});
     shapes.push_back({"box",
                       std::make_unique<BoxObstacle>(
                           Eigen::Vector3d(0.1, -0.2, 0.2),
@@ -252,7 +273,7 @@ void test_barrier_divergence() {
 }
 
 void test_path_energy_with_obstacle() {
-    std::cout << "-- path-energy gradient FD check with obstacle term --\n";
+    std::cout << "-- path-energy gradient FD check with obstacle graph potential --\n";
     MeshData x0 = make_icosphere(1);
     x0.normalize();
     x0.V.rowwise() += Eigen::RowVector3d(2.5, 0.0, 0.0);
@@ -270,6 +291,14 @@ void test_path_energy_with_obstacle() {
     const std::vector<PathEnergyFrameCache> frozen_cache =
         build_path_energy_frame_cache(frames, params);
 
+    const std::vector<MeshData> identical = {x0, x0};
+    const PathEnergyResult same =
+        path_energy(identical, params);
+    check(std::isfinite(same.terms.obstacle_sum) &&
+              same.terms.obstacle_sum > 0.0 &&
+              std::abs(same.terms.total) < 1e-10,
+          "constant obstacle barrier does not add ordinary path energy");
+
     PathEnergyParams without_obs = params;
     without_obs.obstacle = nullptr;
     const double e_with =
@@ -277,7 +306,7 @@ void test_path_energy_with_obstacle() {
     const double e_without =
         path_energy(frames, without_obs, &frozen_cache).terms.total;
     check(std::isfinite(e_with) && e_with > e_without,
-          "path energy with obstacle > path energy without obstacle");
+          "path energy with obstacle graph potential > path energy without obstacle");
 
     const int nv = x0.n_vertices();
     auto pack = [&](const std::vector<MeshData> &f) {
@@ -308,7 +337,7 @@ void test_path_energy_with_obstacle() {
     std::cout << "    frame-1 grad: max abs err = " << r.max_abs_err
               << ", max rel err = " << r.max_rel_err << "\n";
     check(r.pass(1e-4),
-          "path-energy gradient with obstacle matches central FD");
+          "path-energy gradient with obstacle graph potential matches central FD");
     (void)nv;
 }
 

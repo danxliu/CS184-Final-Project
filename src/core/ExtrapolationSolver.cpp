@@ -7,6 +7,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 #include <unsupported/Eigen/IterativeSolvers>
+#include <cmath>
 #include <iostream>
 
 namespace rsh {
@@ -67,15 +68,22 @@ Eigen::VectorXd compute_f(
         FaceGeom g = compute_face_geom(m);
         BVH bvh = c.bvh;
         update_bvh_aggregates(bvh, g);
+        double phi = 0.0;
+        Eigen::MatrixXd grad;
         if (params.tpe_adaptive.enabled) {
-            double phi = tpe_energy_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
-            Eigen::MatrixXd grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
-            return std::make_pair(phi, grad);
+            phi = tpe_energy_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
+            grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
         } else {
-            double phi = tpe_energy_bh(g, bvh, c.bp, params.tpe_alpha);
-            Eigen::MatrixXd grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_alpha);
-            return std::make_pair(phi, grad);
+            phi = tpe_energy_bh(g, bvh, c.bp, params.tpe_alpha);
+            grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_alpha);
         }
+        if (params.obstacle != nullptr) {
+            phi += params.obstacle_weight *
+                   obstacle_energy(m, *params.obstacle);
+            grad += params.obstacle_weight *
+                    obstacle_gradient(m, *params.obstacle);
+        }
+        return std::make_pair(phi, grad);
     };
     
     auto res_km1 = get_phi_grad(x_km1, cache_km1);
@@ -89,13 +97,6 @@ Eigen::VectorXd compute_f(
                          std::pow(res_km1.first - res_k.first, 2.0) +
                          std::pow(res_k.first - res_kp1.first, 2.0));
 
-    if (params.obstacle != nullptr) {
-        out_energy += scale * (
-            obstacle_energy(x_km1, *params.obstacle) +
-            obstacle_energy(x_k,   *params.obstacle) +
-            obstacle_energy(x_kp1, *params.obstacle));
-    }
-
     const int nv = x_k.n_vertices();
     Eigen::MatrixXd grad_k = sw_12.grad_def + sw_23.grad_ref;
 
@@ -104,13 +105,6 @@ Eigen::VectorXd compute_f(
 
     grad_k += 2.0 * dphi_12 * (-res_k.second);
     grad_k += 2.0 * dphi_23 * (res_k.second);
-
-    // Obstacle barrier on the middle frame contributes a constant kick to
-    // d/dx_k. The k-1 and k+1 frames' obstacle terms don't depend on x_k, so
-    // the JacobianOperator is unchanged.
-    if (params.obstacle != nullptr) {
-        grad_k += obstacle_gradient(x_k, *params.obstacle);
-    }
 
     Eigen::VectorXd f(nv * 3);
     for (int i = 0; i < nv; ++i) {
@@ -150,16 +144,23 @@ struct JacobianOperator : public Eigen::EigenBase<JacobianOperator> {
             FaceGeom g = compute_face_geom(m);
             BVH bvh = build_bvh(m, g);
             BlockPairs bp = build_bct_self(bvh, params.tpe_theta);
+            double phi = 0.0;
+            Eigen::MatrixXd grad;
             if (params.tpe_adaptive.enabled) {
                 auto cache = build_tpe_adaptive_cache(m, g, bvh, bp, params.tpe_adaptive);
-                double phi = tpe_energy_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
-                Eigen::MatrixXd grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
-                return std::make_pair(phi, grad);
+                phi = tpe_energy_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
+                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
             } else {
-                double phi = tpe_energy_bh(g, bvh, bp, params.tpe_alpha);
-                Eigen::MatrixXd grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
-                return std::make_pair(phi, grad);
+                phi = tpe_energy_bh(g, bvh, bp, params.tpe_alpha);
+                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
             }
+            if (params.obstacle != nullptr) {
+                phi += params.obstacle_weight *
+                       obstacle_energy(m, *params.obstacle);
+                grad += params.obstacle_weight *
+                        obstacle_gradient(m, *params.obstacle);
+            }
+            return std::make_pair(phi, grad);
         };
         
         auto res_km1 = get_phi_grad(x_km1);
@@ -234,12 +235,18 @@ struct JacobianOperator : public Eigen::EigenBase<JacobianOperator> {
             FaceGeom g = compute_face_geom(m);
             BVH bvh = build_bvh(m, g);
             BlockPairs bp = build_bct_self(bvh, params.tpe_theta);
+            Eigen::MatrixXd grad;
             if (params.tpe_adaptive.enabled) {
                 auto cache = build_tpe_adaptive_cache(m, g, bvh, bp, params.tpe_adaptive);
-                return tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
+                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
             } else {
-                return tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
+                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
             }
+            if (params.obstacle != nullptr) {
+                grad += params.obstacle_weight *
+                        obstacle_gradient(m, *params.obstacle);
+            }
+            return grad;
         };
         Eigen::MatrixXd gp_kp1_mat = get_phi_grad_simple(x_kp1);
         Eigen::VectorXd g_phi_kp1(v.size());
@@ -264,7 +271,29 @@ ExtrapolationResult extrapolate_geodesic(
     out.next_frame.V = 2.0 * x_k.V - x_km1.V;
     
     double cur_energy = 0.0;
-    Eigen::VectorXd f = compute_f(x_km1, x_k, out.next_frame, energy_params, cur_energy);
+    Eigen::VectorXd f =
+        compute_f(x_km1, x_k, out.next_frame, energy_params, cur_energy);
+    if (!std::isfinite(cur_energy)) {
+        double velocity_scale = 0.5;
+        bool found_feasible_guess = false;
+        for (int ls = 0; ls < params.armijo_max_steps; ++ls) {
+            out.next_frame = x_k;
+            out.next_frame.V =
+                x_k.V + velocity_scale * (x_k.V - x_km1.V);
+            f = compute_f(x_km1, x_k, out.next_frame, energy_params,
+                          cur_energy);
+            if (std::isfinite(cur_energy)) {
+                found_feasible_guess = true;
+                break;
+            }
+            velocity_scale *= 0.5;
+        }
+        if (!found_feasible_guess) {
+            out.next_frame = x_k;
+            f = compute_f(x_km1, x_k, out.next_frame, energy_params,
+                          cur_energy);
+        }
+    }
     
     for (int it = 0; it < params.max_newton_iters; ++it) {
         out.newton_iters = it + 1;
@@ -289,6 +318,7 @@ ExtrapolationResult extrapolate_geodesic(
         double f_norm_sq = f.squaredNorm();
         MeshData best_frame = out.next_frame;
         Eigen::VectorXd best_f = f;
+        bool accepted_step = false;
         
         for (int ls = 0; ls < params.armijo_max_steps; ++ls) {
             MeshData trial = out.next_frame;
@@ -297,14 +327,18 @@ ExtrapolationResult extrapolate_geodesic(
             double trial_energy = 0.0;
             Eigen::VectorXd f_trial = compute_f(x_km1, x_k, trial, energy_params, trial_energy);
             
-            if (f_trial.squaredNorm() <= f_norm_sq * (1.0 - 2.0 * params.armijo_c * alpha)) {
+            if (std::isfinite(trial_energy) &&
+                f_trial.squaredNorm() <=
+                    f_norm_sq * (1.0 - 2.0 * params.armijo_c * alpha)) {
                 best_frame = trial;
                 best_f = f_trial;
+                accepted_step = true;
                 break;
             }
             alpha *= 0.5;
-            best_frame = trial;
-            best_f = f_trial;
+        }
+        if (!accepted_step) {
+            break;
         }
         
         out.next_frame = best_frame;

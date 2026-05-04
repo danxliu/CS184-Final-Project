@@ -48,6 +48,31 @@ private:
     double radius_ = 1.0;
 };
 
+class HollowTubeObstacle final : public Obstacle {
+public:
+    HollowTubeObstacle(const Eigen::Vector3d &center,
+                       const Eigen::Vector3d &axis,
+                       double half_length,
+                       double inner_radius,
+                       double outer_radius);
+
+    double signed_distance(const Eigen::Vector3d &x) const override;
+    Eigen::Vector3d
+    signed_distance_gradient(const Eigen::Vector3d &x) const override;
+
+private:
+    Eigen::Vector2d tube_coordinates(const Eigen::Vector3d &x) const;
+    Eigen::Vector2d signed_distance_gradient_2d(
+        const Eigen::Vector2d &coord) const;
+    Eigen::Vector3d radial_direction(const Eigen::Vector3d &x) const;
+
+    Eigen::Vector3d center_;
+    Eigen::Vector3d axis_;
+    double half_length_ = 1.0;
+    double inner_radius_ = 0.5;
+    double outer_radius_ = 0.75;
+};
+
 class BoxObstacle final : public Obstacle {
 public:
     BoxObstacle(const Eigen::Vector3d &center,

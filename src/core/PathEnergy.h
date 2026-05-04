@@ -17,10 +17,12 @@ struct PathEnergyParams {
     double tpe_alpha = 6.0;
     double tpe_theta = 0.5;
     TpeAdaptiveParams tpe_adaptive;
-    // Optional analytic obstacle. When non-null, every frame contributes a
-    // 1/phi^2 vertex barrier (RS Section 7.3.1) summed with the elastic and
-    // repulsive terms before the outer n-scaling.
+    // Optional analytic obstacle. When non-null, its vertex barrier is added
+    // to the graph-manifold potential:
+    //   Phi_total = TPE + obstacle_weight * Phi_obstacle.
+    // It is not an ordinary additive force term in the path energy.
     const Obstacle *obstacle = nullptr;
+    double obstacle_weight = 1.0;
 };
 
 struct PathEnergyTermBreakdown {
@@ -32,13 +34,15 @@ struct PathEnergyTermBreakdown {
 
 struct PathEnergyResult {
     PathEnergyTermBreakdown terms;
+    // Per-frame total graph potential Phi_total, not raw TPE.
     std::vector<double> phi_per_frame;
 };
 
 struct PathEnergyGradientResult {
     PathEnergyResult energy;
     std::vector<Eigen::MatrixXd> grad_frames;  // dE / d x_k
-    std::vector<Eigen::MatrixXd> grad_phi_per_frame; // dPhi / d x_k
+    // dPhi_total / d x_k.
+    std::vector<Eigen::MatrixXd> grad_phi_per_frame;
 };
 
 struct PathEnergyFrameCache {

@@ -41,26 +41,20 @@ void remove_stale_frames(const std::string &dir) {
     }
 }
 
-// Phase 3.5 ball-through-tube smoke. Status (2026-05-04):
-//
-// The obstacle barrier wiring (PathEnergy + ExtrapolationSolver) is in place
-// and energy / gradient FD-checks pass. The current ExtrapolationSolver
-// uses an FD-on-FD Jacobian (FD on the bending grad_ref FD-gradient) plus
-// an unpreconditioned GMRES, which diverges in the obstacle-near regime at
-// even icosphere(1) scale. Until that is fixed (Sherman-Morrison rank-1
-// trick from RS Eq. 23 + analytical bending grad_ref + a GMRES
-// preconditioner), the demo is best run far from the obstacle to confirm
-// the integrator follows constant velocity. Close-to-obstacle runs do
-// raise the obstacle energy correctly and halt on intersection, but Newton
-// does not actually deflect the trajectory.
+// Phase 3.5 ball-through-tube diagnostic. This sets up the correct geometry:
+// a ball moves along the axis of a hollow tube wall. The current
+// ExtrapolationSolver is still a weak link, so treat this as a strict smoke
+// test for obstacle wiring and feasible-frame rejection, not as a finished
+// RS Figure 4 reproduction.
 struct CliOptions {
     int icosphere_subdiv = 1;
-    int num_frames = 20;
+    int num_frames = 30;
     double ball_radius = 0.3;
-    double start_x = -3.0;
-    double speed = 0.05;
-    double tube_radius = 0.5;
-    double tube_half_length = 1.5;
+    double start_x = -1.45;
+    double speed = 0.08;
+    double tube_inner_radius = 0.22;
+    double tube_outer_radius = 0.36;
+    double tube_half_length = 1.0;
     int max_newton_iters = 8;
     double newton_tol = 1e-2;
     std::string out_dir = "out/ball_tube";
@@ -101,8 +95,14 @@ CliOptions parse_args(int argc, char **argv) {
             opts.start_x = parse_double(argc, argv, i, arg);
         } else if (arg == "--speed") {
             opts.speed = parse_double(argc, argv, i, arg);
-        } else if (arg == "--tube-radius") {
-            opts.tube_radius = parse_double(argc, argv, i, arg);
+        } else if (arg == "--tube-radius" ||
+                   arg == "--tube-inner-radius") {
+            opts.tube_inner_radius = parse_double(argc, argv, i, arg);
+        } else if (arg == "--tube-outer-radius") {
+            opts.tube_outer_radius = parse_double(argc, argv, i, arg);
+        } else if (arg == "--tube-wall-thickness") {
+            const double thickness = parse_double(argc, argv, i, arg);
+            opts.tube_outer_radius = opts.tube_inner_radius + thickness;
         } else if (arg == "--tube-half-length") {
             opts.tube_half_length = parse_double(argc, argv, i, arg);
         } else if (arg == "--max-newton-iters") {
@@ -118,7 +118,8 @@ CliOptions parse_args(int argc, char **argv) {
     if (opts.num_frames < 3) {
         throw std::runtime_error("--num-frames must be >= 3");
     }
-    if (!(opts.ball_radius > 0.0 && opts.tube_radius > 0.0 &&
+    if (!(opts.ball_radius > 0.0 && opts.tube_inner_radius > 0.0 &&
+          opts.tube_outer_radius > opts.tube_inner_radius &&
           opts.tube_half_length > 0.0)) {
         throw std::runtime_error("ball/tube geometry must be positive");
     }
@@ -133,56 +134,51 @@ double min_signed_distance(const MeshData &mesh, const rsh::Obstacle &obs) {
     return m;
 }
 
-// Dump a coarse capped-cylinder approximation of the capsule for
-// visualization (polyscope_viewer auto-loads <dir>/obstacle.obj).
-// Caps are flat disks rather than hemispheres — visually adequate for the
-// demo since the ball flies past the cylinder side, not through the ends.
-void write_capsule_visual_obj(const Eigen::Vector3d &p0,
-                              const Eigen::Vector3d &p1,
-                              double r,
-                              int n_circ,
-                              const std::string &path) {
-    const Eigen::Vector3d axis = (p1 - p0).normalized();
-    const Eigen::Vector3d e_alt =
-        std::abs(axis.x()) > 0.9 ? Eigen::Vector3d::UnitY()
-                                 : Eigen::Vector3d::UnitX();
-    const Eigen::Vector3d u = (e_alt - axis * e_alt.dot(axis)).normalized();
-    const Eigen::Vector3d v = axis.cross(u);
-
+// Dump the finite hollow tube wall used by the SDF. Axis is +x, matching
+// the extrapolated ball trajectory.
+void write_hollow_tube_visual_obj(double half_length,
+                                  double inner_radius,
+                                  double outer_radius,
+                                  int n_circ,
+                                  const std::string &path) {
     std::ofstream out(path);
     out << std::setprecision(8);
-    // Vertex layout:
-    //   1                    : end-cap center at p0
-    //   2 .. n_circ + 1      : ring at p0
-    //   n_circ + 2 .. 2 n_circ + 1: ring at p1
-    //   2 n_circ + 2         : end-cap center at p1
-    out << "v " << p0.x() << " " << p0.y() << " " << p0.z() << "\n";
-    for (int side = 0; side < 2; ++side) {
-        const Eigen::Vector3d base = (side == 0) ? p0 : p1;
-        for (int i = 0; i < n_circ; ++i) {
-            const double t = 2.0 * M_PI * i / n_circ;
-            const Eigen::Vector3d p =
-                base + r * (std::cos(t) * u + std::sin(t) * v);
-            out << "v " << p.x() << " " << p.y() << " " << p.z() << "\n";
+    const double xs[2] = {-half_length, half_length};
+    const double radii[2] = {outer_radius, inner_radius};
+    for (double x : xs) {
+        for (double r : radii) {
+            for (int i = 0; i < n_circ; ++i) {
+                const double t = 2.0 * M_PI * i / n_circ;
+                out << "v " << x << " " << r * std::cos(t) << " "
+                    << r * std::sin(t) << "\n";
+            }
         }
     }
-    out << "v " << p1.x() << " " << p1.y() << " " << p1.z() << "\n";
 
-    const int center0 = 1;
-    const int ring0 = 2;                  // first vertex of ring0 (1-based)
-    const int ring1 = ring0 + n_circ;
-    const int center1 = ring1 + n_circ;
+    auto idx = [&](int side, int radius_id, int i) {
+        return 1 + (side * 2 + radius_id) * n_circ + (i % n_circ);
+    };
     for (int i = 0; i < n_circ; ++i) {
-        const int a = ring0 + i;
-        const int b = ring0 + (i + 1) % n_circ;
-        const int c = ring1 + i;
-        const int d = ring1 + (i + 1) % n_circ;
-        // Cylinder side (two triangles per quad).
-        out << "f " << a << " " << b << " " << d << "\n";
-        out << "f " << a << " " << d << " " << c << "\n";
-        // Cap fans.
-        out << "f " << center0 << " " << b << " " << a << "\n";
-        out << "f " << center1 << " " << c << " " << d << "\n";
+        const int j = (i + 1) % n_circ;
+        // Outer cylinder.
+        out << "f " << idx(0, 0, i) << " " << idx(1, 0, i) << " "
+            << idx(1, 0, j) << "\n";
+        out << "f " << idx(0, 0, i) << " " << idx(1, 0, j) << " "
+            << idx(0, 0, j) << "\n";
+        // Inner cylinder, reversed normals.
+        out << "f " << idx(0, 1, i) << " " << idx(1, 1, j) << " "
+            << idx(1, 1, i) << "\n";
+        out << "f " << idx(0, 1, i) << " " << idx(0, 1, j) << " "
+            << idx(1, 1, j) << "\n";
+        // End annuli.
+        out << "f " << idx(0, 1, i) << " " << idx(0, 0, i) << " "
+            << idx(0, 0, j) << "\n";
+        out << "f " << idx(0, 1, i) << " " << idx(0, 0, j) << " "
+            << idx(0, 1, j) << "\n";
+        out << "f " << idx(1, 1, i) << " " << idx(1, 0, j) << " "
+            << idx(1, 0, i) << "\n";
+        out << "f " << idx(1, 1, i) << " " << idx(1, 1, j) << " "
+            << idx(1, 0, j) << "\n";
     }
 }
 
@@ -198,20 +194,29 @@ int main(int argc, char **argv) {
     }
 
     // Ball: icosphere shrunk to ball_radius, translated so its initial
-    // centroid is at (start_x, 0, 0). It moves in +x.
+    // centroid is before the tube entrance. It moves along the tube axis +x.
     MeshData ball = rsh::make_icosphere(opts.icosphere_subdiv);
     ball.normalize();
-    ball.V *= opts.ball_radius;
+    const Eigen::RowVector3d c = ball.V.colwise().mean();
+    ball.V.rowwise() -= c;
+    const double normalized_radius = ball.V.rowwise().norm().maxCoeff();
+    if (!(normalized_radius > 0.0)) {
+        std::cerr << "demo_phase3_ball_tube: invalid ball mesh radius.\n";
+        return 1;
+    }
+    ball.V *= opts.ball_radius / normalized_radius;
     ball.V.rowwise() += Eigen::RowVector3d(opts.start_x, 0.0, 0.0);
     ball.L0 = ball.compute_L0();
 
-    // Tube: vertical capsule at the origin, axis along Z, radius tube_radius.
-    // Ball moves in +x and meets the tube; tube_radius < ball_radius +
-    // tube_half_length so the ball must deform around the tube to clear it.
-    rsh::CapsuleObstacle tube(
-        Eigen::Vector3d(0.0, 0.0, -opts.tube_half_length),
-        Eigen::Vector3d(0.0, 0.0,  opts.tube_half_length),
-        opts.tube_radius);
+    // Tube: finite hollow wall at the origin, axis along +x. The hollow
+    // channel radius is intentionally smaller than the ball radius, so a
+    // straight rigid trajectory would collide with the inner wall.
+    rsh::HollowTubeObstacle tube(
+        Eigen::Vector3d::Zero(),
+        Eigen::Vector3d::UnitX(),
+        opts.tube_half_length,
+        opts.tube_inner_radius,
+        opts.tube_outer_radius);
 
     // Initial 2-frame stencil: x_km1 at start, x_k = x_km1 + (speed, 0, 0).
     MeshData x_km1 = ball;
@@ -230,10 +235,11 @@ int main(int argc, char **argv) {
 
     std::filesystem::create_directories(opts.out_dir);
     remove_stale_frames(opts.out_dir);
-    write_capsule_visual_obj(
-        Eigen::Vector3d(0.0, 0.0, -opts.tube_half_length),
-        Eigen::Vector3d(0.0, 0.0,  opts.tube_half_length),
-        opts.tube_radius, /*n_circ=*/24,
+    write_hollow_tube_visual_obj(
+        opts.tube_half_length,
+        opts.tube_inner_radius,
+        opts.tube_outer_radius,
+        /*n_circ=*/32,
         opts.out_dir + "/obstacle.obj");
 
     rsh::PathEnergyParams params;
@@ -249,7 +255,7 @@ int main(int argc, char **argv) {
     x_k.save_obj(frame_path(opts.out_dir, 1));
 
     std::ofstream csv(opts.out_dir + "/energy.csv");
-    csv << "frame,total,shell,repulsive,obstacle,min_phi,centroid_x,"
+    csv << "frame,total,shell,graph_potential,obstacle_phi,min_phi,centroid_x,"
            "newton_iters,converged\n";
     csv << std::setprecision(10);
 
@@ -272,7 +278,8 @@ int main(int argc, char **argv) {
 
     std::cout << "demo_phase3_ball_tube: "
               << "ball_r=" << opts.ball_radius
-              << " tube_r=" << opts.tube_radius
+              << " tube_inner_r=" << opts.tube_inner_radius
+              << " tube_outer_r=" << opts.tube_outer_radius
               << " speed=" << opts.speed
               << " frames=" << opts.num_frames << "\n";
 

@@ -16,6 +16,13 @@ Eigen::Vector3d fallback_unit_x() {
     return Eigen::Vector3d::UnitX();
 }
 
+Eigen::Vector3d perpendicular_unit(const Eigen::Vector3d &axis) {
+    const Eigen::Vector3d seed =
+        std::abs(axis.x()) > 0.9 ? Eigen::Vector3d::UnitY()
+                                 : Eigen::Vector3d::UnitX();
+    return (seed - axis * seed.dot(axis)).normalized();
+}
+
 double require_positive_radius(double radius, const char *name) {
     if (!(radius > 0.0) || !std::isfinite(radius)) {
         throw std::runtime_error(std::string(name) +
@@ -67,6 +74,98 @@ CapsuleObstacle::signed_distance_gradient(const Eigen::Vector3d &x) const {
     const double n = d.norm();
     if (n <= 0.0) return fallback_unit_x();
     return d / n;
+}
+
+HollowTubeObstacle::HollowTubeObstacle(const Eigen::Vector3d &center,
+                                       const Eigen::Vector3d &axis,
+                                       double half_length,
+                                       double inner_radius,
+                                       double outer_radius)
+    : center_(center),
+      axis_(axis),
+      half_length_(half_length),
+      inner_radius_(inner_radius),
+      outer_radius_(outer_radius) {
+    const double axis_norm = axis_.norm();
+    if (!(axis_norm > 0.0) || !std::isfinite(axis_norm)) {
+        throw std::runtime_error(
+            "HollowTubeObstacle: axis must be nonzero and finite");
+    }
+    axis_ /= axis_norm;
+    if (!(half_length_ > 0.0) || !std::isfinite(half_length_)) {
+        throw std::runtime_error(
+            "HollowTubeObstacle: half_length must be positive and finite");
+    }
+    if (!(inner_radius_ > 0.0) || !(outer_radius_ > inner_radius_) ||
+        !std::isfinite(inner_radius_) || !std::isfinite(outer_radius_)) {
+        throw std::runtime_error(
+            "HollowTubeObstacle: radii must satisfy 0 < inner < outer");
+    }
+}
+
+Eigen::Vector2d
+HollowTubeObstacle::tube_coordinates(const Eigen::Vector3d &x) const {
+    const Eigen::Vector3d d = x - center_;
+    const double axial = d.dot(axis_);
+    const double radial = (d - axial * axis_).norm();
+    return Eigen::Vector2d(axial, radial);
+}
+
+double HollowTubeObstacle::signed_distance(
+    const Eigen::Vector3d &x) const {
+    const Eigen::Vector2d coord = tube_coordinates(x);
+    const double radial_mid = 0.5 * (inner_radius_ + outer_radius_);
+    const double radial_half = 0.5 * (outer_radius_ - inner_radius_);
+    const Eigen::Vector2d p(coord.x(), coord.y() - radial_mid);
+    const Eigen::Vector2d q(std::abs(p.x()) - half_length_,
+                            std::abs(p.y()) - radial_half);
+    const Eigen::Vector2d outside = q.cwiseMax(0.0);
+    const double outside_dist = outside.norm();
+    const double inside_dist = std::min(q.maxCoeff(), 0.0);
+    return outside_dist + inside_dist;
+}
+
+Eigen::Vector2d HollowTubeObstacle::signed_distance_gradient_2d(
+    const Eigen::Vector2d &coord) const {
+    const double radial_mid = 0.5 * (inner_radius_ + outer_radius_);
+    const double radial_half = 0.5 * (outer_radius_ - inner_radius_);
+    const Eigen::Vector2d p(coord.x(), coord.y() - radial_mid);
+    const Eigen::Vector2d q(std::abs(p.x()) - half_length_,
+                            std::abs(p.y()) - radial_half);
+    const Eigen::Vector2d outside = q.cwiseMax(0.0);
+
+    Eigen::Vector2d g = Eigen::Vector2d::Zero();
+    if (outside.squaredNorm() > 0.0) {
+        const Eigen::Vector2d direction = outside.normalized();
+        for (int i = 0; i < 2; ++i) {
+            if (q(i) > 0.0) {
+                g(i) = direction(i) * (p(i) >= 0.0 ? 1.0 : -1.0);
+            }
+        }
+        return g;
+    }
+
+    const int axis = q.x() >= q.y() ? 0 : 1;
+    g(axis) = p(axis) >= 0.0 ? 1.0 : -1.0;
+    return g;
+}
+
+Eigen::Vector3d HollowTubeObstacle::radial_direction(
+    const Eigen::Vector3d &x) const {
+    const Eigen::Vector3d d = x - center_;
+    const double axial = d.dot(axis_);
+    const Eigen::Vector3d radial = d - axial * axis_;
+    const double n = radial.norm();
+    if (n > 0.0) return radial / n;
+    return perpendicular_unit(axis_);
+}
+
+Eigen::Vector3d
+HollowTubeObstacle::signed_distance_gradient(
+    const Eigen::Vector3d &x) const {
+    const Eigen::Vector2d coord = tube_coordinates(x);
+    const Eigen::Vector2d g2 = signed_distance_gradient_2d(coord);
+    return g2.x() * axis_ + g2.y() * radial_direction(x);
 }
 
 BoxObstacle::BoxObstacle(const Eigen::Vector3d &center,
