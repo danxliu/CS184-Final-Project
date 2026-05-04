@@ -1,6 +1,7 @@
 #include "GradCheck.h"
 #include "MeshData.h"
 #include "Obstacle.h"
+#include "PathEnergy.h"
 #include "TestMeshes.h"
 
 #include <Eigen/Dense>
@@ -250,6 +251,67 @@ void test_barrier_divergence() {
           "barrier energy is finite but large before contact");
 }
 
+void test_path_energy_with_obstacle() {
+    std::cout << "-- path-energy gradient FD check with obstacle term --\n";
+    MeshData x0 = make_icosphere(1);
+    x0.normalize();
+    x0.V.rowwise() += Eigen::RowVector3d(2.5, 0.0, 0.0);
+    x0.L0 = x0.compute_L0();
+    std::vector<MeshData> frames(3, x0);
+    frames[1].V.col(0) *= 1.02;
+    frames[2].V.col(1) *= 0.97;
+    for (auto &f : frames) f.L0 = f.compute_L0();
+
+    SphereObstacle obs(Eigen::Vector3d::Zero(), 1.0);
+    PathEnergyParams params;
+    params.obstacle = &obs;
+    params.tpe_alpha = 6.0;
+    params.tpe_theta = 0.5;
+    const std::vector<PathEnergyFrameCache> frozen_cache =
+        build_path_energy_frame_cache(frames, params);
+
+    PathEnergyParams without_obs = params;
+    without_obs.obstacle = nullptr;
+    const double e_with =
+        path_energy(frames, params, &frozen_cache).terms.total;
+    const double e_without =
+        path_energy(frames, without_obs, &frozen_cache).terms.total;
+    check(std::isfinite(e_with) && e_with > e_without,
+          "path energy with obstacle > path energy without obstacle");
+
+    const int nv = x0.n_vertices();
+    auto pack = [&](const std::vector<MeshData> &f) {
+        return flatten_matrix(f[1].V);
+    };
+    auto unpack = [&](const Eigen::VectorXd &z, std::vector<MeshData> &f) {
+        f = frames;
+        f[1].V = unflatten_vertices(z);
+        f[1].L0 = f[1].compute_L0();
+    };
+
+    GradCheckResult r = finite_diff_gradient_check(
+        [&](const Eigen::VectorXd &z) {
+            std::vector<MeshData> f;
+            unpack(z, f);
+            return path_energy(f, params, &frozen_cache).terms.total;
+        },
+        [&](const Eigen::VectorXd &z) {
+            std::vector<MeshData> f;
+            unpack(z, f);
+            const PathEnergyGradientResult g =
+                path_energy_with_gradient(f, params, &frozen_cache);
+            return flatten_matrix(g.grad_frames[1]);
+        },
+        pack(frames),
+        1e-5);
+
+    std::cout << "    frame-1 grad: max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err << "\n";
+    check(r.pass(1e-4),
+          "path-energy gradient with obstacle matches central FD");
+    (void)nv;
+}
+
 void test_infeasibility_signal() {
     std::cout << "-- obstacle infeasibility signal --\n";
     MeshData mesh = make_icosphere(2);
@@ -271,6 +333,7 @@ int main() {
     test_sdf_gradient_fd();
     test_obstacle_energy_gradient_fd();
     test_barrier_divergence();
+    test_path_energy_with_obstacle();
     test_infeasibility_signal();
 
     if (failures == 0) {

@@ -3,6 +3,7 @@
 #include "BCT.h"
 #include "BVH.h"
 #include "FaceGeom.h"
+#include "Obstacle.h"
 
 #include <chrono>
 #include <iostream>
@@ -154,7 +155,15 @@ PathEnergyResult path_energy(const std::vector<MeshData> &frames,
             out.terms.shell_sum += w.total;
             out.terms.repulsive_sum += dphi * dphi;
         }
-        out.terms.total = scale * (out.terms.shell_sum + out.terms.repulsive_sum);
+        if (params.obstacle != nullptr) {
+            for (size_t k = 0; k < frames.size(); ++k) {
+                out.terms.obstacle_sum +=
+                    obstacle_energy(frames[k], *params.obstacle);
+            }
+        }
+        out.terms.total = scale *
+            (out.terms.shell_sum + out.terms.repulsive_sum +
+             out.terms.obstacle_sum);
     }
     return out;
 }
@@ -203,8 +212,19 @@ PathEnergyGradientResult path_energy_with_gradient(
                 scale * (-2.0 * dphi) * fe[static_cast<size_t>(k)].grad_phi;
         }
 
-        out.energy.terms.total =
-            scale * (out.energy.terms.shell_sum + out.energy.terms.repulsive_sum);
+        if (params.obstacle != nullptr) {
+            for (size_t k = 0; k < frames.size(); ++k) {
+                out.energy.terms.obstacle_sum +=
+                    obstacle_energy(frames[k], *params.obstacle);
+                out.grad_frames[k] +=
+                    scale * obstacle_gradient(frames[k], *params.obstacle);
+            }
+        }
+
+        out.energy.terms.total = scale *
+            (out.energy.terms.shell_sum +
+             out.energy.terms.repulsive_sum +
+             out.energy.terms.obstacle_sum);
     }
     return out;
 }

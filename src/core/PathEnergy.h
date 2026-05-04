@@ -10,17 +10,24 @@
 
 namespace rsh {
 
+class Obstacle;
+
 struct PathEnergyParams {
     ShellEnergyParams shell;
     double tpe_alpha = 6.0;
     double tpe_theta = 0.5;
     TpeAdaptiveParams tpe_adaptive;
+    // Optional analytic obstacle. When non-null, every frame contributes a
+    // 1/phi^2 vertex barrier (RS Section 7.3.1) summed with the elastic and
+    // repulsive terms before the outer n-scaling.
+    const Obstacle *obstacle = nullptr;
 };
 
 struct PathEnergyTermBreakdown {
     double total = 0.0;
     double shell_sum = 0.0;
     double repulsive_sum = 0.0;
+    double obstacle_sum = 0.0;
 };
 
 struct PathEnergyResult {

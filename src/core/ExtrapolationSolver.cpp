@@ -2,6 +2,7 @@
 #include "FaceGeom.h"
 #include "BVH.h"
 #include "BCT.h"
+#include "Obstacle.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -84,19 +85,33 @@ Eigen::VectorXd compute_f(
     ShellEnergyGradientResult sw_12 = shell_energy_with_gradient(x_km1, x_k, params.shell);
     ShellEnergyGradientResult sw_23 = shell_energy_with_gradient(x_k, x_kp1, params.shell);
     
-    out_energy = scale * (sw_12.energy.total + sw_23.energy.total + 
-                         std::pow(res_km1.first - res_k.first, 2.0) + 
+    out_energy = scale * (sw_12.energy.total + sw_23.energy.total +
+                         std::pow(res_km1.first - res_k.first, 2.0) +
                          std::pow(res_k.first - res_kp1.first, 2.0));
-    
+
+    if (params.obstacle != nullptr) {
+        out_energy += scale * (
+            obstacle_energy(x_km1, *params.obstacle) +
+            obstacle_energy(x_k,   *params.obstacle) +
+            obstacle_energy(x_kp1, *params.obstacle));
+    }
+
     const int nv = x_k.n_vertices();
     Eigen::MatrixXd grad_k = sw_12.grad_def + sw_23.grad_ref;
-    
+
     double dphi_12 = res_km1.first - res_k.first;
     double dphi_23 = res_k.first - res_kp1.first;
-    
+
     grad_k += 2.0 * dphi_12 * (-res_k.second);
     grad_k += 2.0 * dphi_23 * (res_k.second);
-    
+
+    // Obstacle barrier on the middle frame contributes a constant kick to
+    // d/dx_k. The k-1 and k+1 frames' obstacle terms don't depend on x_k, so
+    // the JacobianOperator is unchanged.
+    if (params.obstacle != nullptr) {
+        grad_k += obstacle_gradient(x_k, *params.obstacle);
+    }
+
     Eigen::VectorXd f(nv * 3);
     for (int i = 0; i < nv; ++i) {
         f.segment<3>(3 * i) = scale * grad_k.row(i).transpose();
