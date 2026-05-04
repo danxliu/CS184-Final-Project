@@ -17,6 +17,10 @@
 #include <Eigen/SparseCholesky>
 #include <unsupported/Eigen/IterativeSolvers>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace rsh {
 
 // Forward declaration for traits specialization
@@ -40,6 +44,22 @@ struct traits<rsh::HsLeftPreconditionedOperator> : public traits<Eigen::MatrixXd
 namespace rsh {
 
 namespace {
+
+int omp_thread_count() {
+#ifdef _OPENMP
+    return std::max(1, omp_get_max_threads());
+#else
+    return 1;
+#endif
+}
+
+int omp_thread_index() {
+#ifdef _OPENMP
+    return omp_get_thread_num();
+#else
+    return 0;
+#endif
+}
 
 double robust_cotangent(const Eigen::Vector3d &u, const Eigen::Vector3d &v) {
     const double cross_norm = u.cross(v).norm();
@@ -408,7 +428,26 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
         std::vector<double> SumA0(bvh.n_nodes(), 0.0);
         std::vector<Eigen::Vector3d> SumQ0(
             static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero());
-        for (const auto& cp : bp.admissible) {
+        const int n_threads = omp_thread_count();
+        std::vector<std::vector<double>> tls_SumA(
+            static_cast<size_t>(n_threads),
+            std::vector<double>(static_cast<size_t>(bvh.n_nodes()), 0.0));
+        std::vector<std::vector<Eigen::Matrix3d>> tls_SumQ(
+            static_cast<size_t>(n_threads),
+            std::vector<Eigen::Matrix3d>(
+                static_cast<size_t>(bvh.n_nodes()), Eigen::Matrix3d::Zero()));
+        std::vector<std::vector<double>> tls_SumA0(
+            static_cast<size_t>(n_threads),
+            std::vector<double>(static_cast<size_t>(bvh.n_nodes()), 0.0));
+        std::vector<std::vector<Eigen::Vector3d>> tls_SumQ0(
+            static_cast<size_t>(n_threads),
+            std::vector<Eigen::Vector3d>(
+                static_cast<size_t>(bvh.n_nodes()), Eigen::Vector3d::Zero()));
+        const int n_admissible = static_cast<int>(bp.admissible.size());
+#pragma omp parallel for schedule(static)
+        for (int pair_idx = 0; pair_idx < n_admissible; ++pair_idx) {
+            const auto& cp = bp.admissible[static_cast<size_t>(pair_idx)];
+            const int tid = omp_thread_index();
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
             double r2 = (U.centroid - V.centroid).squaredNorm();
@@ -416,12 +455,25 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
             double K = 1.0 / std::pow(r2, power);
             
             // Interaction U <- V (covers directed pair)
-            SumA[cp.u] += K * V.area;
-            SumQ[cp.u] += K * Q[cp.v];
+            tls_SumA[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K * V.area;
+            tls_SumQ[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K * Q[cp.v];
 
             const double K0 = b0_kernel_sym_clusters(U, V, power);
-            SumA0[cp.u] += K0 * V.area;
-            SumQ0[cp.u] += K0 * Q0[static_cast<size_t>(cp.v)];
+            tls_SumA0[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K0 * V.area;
+            tls_SumQ0[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K0 * Q0[static_cast<size_t>(cp.v)];
+        }
+        for (int tid = 0; tid < n_threads; ++tid) {
+            for (int i = 0; i < bvh.n_nodes(); ++i) {
+                const size_t si = static_cast<size_t>(i);
+                SumA[si] += tls_SumA[static_cast<size_t>(tid)][si];
+                SumQ[si] += tls_SumQ[static_cast<size_t>(tid)][si];
+                SumA0[si] += tls_SumA0[static_cast<size_t>(tid)][si];
+                SumQ0[si] += tls_SumQ0[static_cast<size_t>(tid)][si];
+            }
         }
 
         // Propagate cluster sums down the tree.
@@ -459,7 +511,19 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
         }
 
         // Near-field exact summation
-        for (const auto& cp : bp.near_field) {
+        std::vector<std::vector<Eigen::Matrix3d>> tls_face_dual(
+            static_cast<size_t>(n_threads),
+            std::vector<Eigen::Matrix3d>(
+                static_cast<size_t>(nf), Eigen::Matrix3d::Zero()));
+        std::vector<std::vector<Eigen::Vector3d>> tls_face_dual0(
+            static_cast<size_t>(n_threads),
+            std::vector<Eigen::Vector3d>(
+                static_cast<size_t>(nf), Eigen::Vector3d::Zero()));
+        const int n_near = static_cast<int>(bp.near_field.size());
+#pragma omp parallel for schedule(static)
+        for (int pair_idx = 0; pair_idx < n_near; ++pair_idx) {
+            const auto& cp = bp.near_field[static_cast<size_t>(pair_idx)];
+            const int tid = omp_thread_index();
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
             const bool self = (cp.u == cp.v);
@@ -471,17 +535,28 @@ struct HsOperator : public Eigen::EigenBase<HsOperator> {
                     double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
                     if (r2 == 0.0) continue;
                     double K = 1.0 / std::pow(r2, power);
-                    face_dual[static_cast<size_t>(a)] +=
+                    tls_face_dual[static_cast<size_t>(tid)]
+                        [static_cast<size_t>(a)] +=
                         2.0 * g.A(a) * g.A(b) * K *
                         (grad_face[static_cast<size_t>(a)] -
                          grad_face[static_cast<size_t>(b)]);
 
                     const double K0 = b0_kernel_sym_faces(g, a, b, power);
-                    face_dual0[static_cast<size_t>(a)] +=
+                    tls_face_dual0[static_cast<size_t>(tid)]
+                        [static_cast<size_t>(a)] +=
                         g.A(a) * g.A(b) * K0 *
                         (face_x[static_cast<size_t>(a)] -
                          face_x[static_cast<size_t>(b)]);
                 }
+            }
+        }
+        for (int tid = 0; tid < n_threads; ++tid) {
+            for (int f = 0; f < nf; ++f) {
+                const size_t sf = static_cast<size_t>(f);
+                face_dual[sf] +=
+                    tls_face_dual[static_cast<size_t>(tid)][sf];
+                face_dual0[sf] +=
+                    tls_face_dual0[static_cast<size_t>(tid)][sf];
             }
         }
 
@@ -557,14 +632,34 @@ struct ScalarFractionalLaplacian {
 
         std::vector<double> SumA(bvh.n_nodes(), 0.0);
         std::vector<double> SumQ(bvh.n_nodes(), 0.0);
-        for (const auto& cp : bp.admissible) {
+        const int n_threads = omp_thread_count();
+        std::vector<std::vector<double>> tls_SumA(
+            static_cast<size_t>(n_threads),
+            std::vector<double>(static_cast<size_t>(bvh.n_nodes()), 0.0));
+        std::vector<std::vector<double>> tls_SumQ(
+            static_cast<size_t>(n_threads),
+            std::vector<double>(static_cast<size_t>(bvh.n_nodes()), 0.0));
+        const int n_admissible = static_cast<int>(bp.admissible.size());
+#pragma omp parallel for schedule(static)
+        for (int pair_idx = 0; pair_idx < n_admissible; ++pair_idx) {
+            const auto& cp = bp.admissible[static_cast<size_t>(pair_idx)];
+            const int tid = omp_thread_index();
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
             const double r2 = (U.centroid - V.centroid).squaredNorm();
             if (r2 == 0.0) continue;
             const double K = 1.0 / std::pow(r2, power);
-            SumA[cp.u] += K * V.area;
-            SumQ[cp.u] += K * Q[static_cast<size_t>(cp.v)];
+            tls_SumA[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K * V.area;
+            tls_SumQ[static_cast<size_t>(tid)][static_cast<size_t>(cp.u)] +=
+                K * Q[static_cast<size_t>(cp.v)];
+        }
+        for (int tid = 0; tid < n_threads; ++tid) {
+            for (int i = 0; i < bvh.n_nodes(); ++i) {
+                const size_t si = static_cast<size_t>(i);
+                SumA[si] += tls_SumA[static_cast<size_t>(tid)][si];
+                SumQ[si] += tls_SumQ[static_cast<size_t>(tid)][si];
+            }
         }
 
         for (int i = 0; i < bvh.n_nodes(); ++i) {
@@ -589,7 +684,17 @@ struct ScalarFractionalLaplacian {
             }
         }
 
-        for (const auto& cp : bp.near_field) {
+        std::vector<Eigen::VectorXd> tls_face_dual;
+        tls_face_dual.reserve(static_cast<size_t>(n_threads));
+        for (int tid = 0; tid < n_threads; ++tid) {
+            tls_face_dual.push_back(Eigen::VectorXd::Zero(nf));
+        }
+        const int n_near = static_cast<int>(bp.near_field.size());
+#pragma omp parallel for schedule(static)
+        for (int pair_idx = 0; pair_idx < n_near; ++pair_idx) {
+            const auto& cp = bp.near_field[static_cast<size_t>(pair_idx)];
+            Eigen::VectorXd &face_dual_local =
+                tls_face_dual[static_cast<size_t>(omp_thread_index())];
             const BVHNode& U = bvh.nodes[cp.u];
             const BVHNode& V = bvh.nodes[cp.v];
             const bool self = (cp.u == cp.v);
@@ -601,10 +706,13 @@ struct ScalarFractionalLaplacian {
                     const double r2 = (g.C.row(a) - g.C.row(b)).squaredNorm();
                     if (r2 == 0.0) continue;
                     const double K = 1.0 / std::pow(r2, power);
-                    face_dual(a) +=
+                    face_dual_local(a) +=
                         2.0 * g.A(a) * g.A(b) * K * (face_x(a) - face_x(b));
                 }
             }
+        }
+        for (int tid = 0; tid < n_threads; ++tid) {
+            face_dual += tls_face_dual[static_cast<size_t>(tid)];
         }
 
         Eigen::VectorXd y = Eigen::VectorXd::Zero(nv);

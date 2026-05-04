@@ -7,11 +7,31 @@
 #include <limits>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace rsh {
 
 namespace {
 
 using Vec3 = Eigen::Vector3d;
+
+int omp_thread_count() {
+#ifdef _OPENMP
+    return std::max(1, omp_get_max_threads());
+#else
+    return 1;
+#endif
+}
+
+int omp_thread_index() {
+#ifdef _OPENMP
+    return omp_get_thread_num();
+#else
+    return 0;
+#endif
+}
 
 struct SubTriState {
     std::array<Vec3, 3> bary;
@@ -322,8 +342,11 @@ double admissible_energy(const FaceGeom &g,
                          const BVH &bvh,
                          const BlockPairs &bp,
                          double alpha) {
-    double phi = 0.0;
-    for (const ClusterPair &cp : bp.admissible) {
+    const int n_pairs = static_cast<int>(bp.admissible.size());
+    std::vector<double> partial(static_cast<size_t>(omp_thread_count()), 0.0);
+#pragma omp parallel for schedule(static)
+    for (int pair_idx = 0; pair_idx < n_pairs; ++pair_idx) {
+        const ClusterPair &cp = bp.admissible[static_cast<size_t>(pair_idx)];
         const BVHNode &U = bvh.nodes[cp.u];
         const BVHNode &V = bvh.nodes[cp.v];
         const Vec3 d = U.centroid - V.centroid;
@@ -332,8 +355,11 @@ double admissible_energy(const FaceGeom &g,
         const double s = nU_mean.dot(d);
         const double num = std::pow(std::abs(s), alpha);
         const double den = std::pow(r2, alpha);
-        phi += U.area * V.area * num / den;
+        partial[static_cast<size_t>(omp_thread_index())] +=
+            U.area * V.area * num / den;
     }
+    double phi = 0.0;
+    for (double p : partial) phi += p;
     return phi;
 }
 
@@ -341,11 +367,15 @@ double midpoint_nearfield_energy(const FaceGeom &g,
                                  const BVH &bvh,
                                  const BlockPairs &bp,
                                  double alpha) {
-    double phi = 0.0;
-    for (const ClusterPair &cp : bp.near_field) {
+    const int n_pairs = static_cast<int>(bp.near_field.size());
+    std::vector<double> partial(static_cast<size_t>(omp_thread_count()), 0.0);
+#pragma omp parallel for schedule(static)
+    for (int pair_idx = 0; pair_idx < n_pairs; ++pair_idx) {
+        const ClusterPair &cp = bp.near_field[static_cast<size_t>(pair_idx)];
         const BVHNode &U = bvh.nodes[cp.u];
         const BVHNode &V = bvh.nodes[cp.v];
         const bool self = (cp.u == cp.v);
+        double local_phi = 0.0;
         for (int i = U.face_start; i < U.face_end; ++i) {
             const int t1 = bvh.face_indices[i];
             const Vec3 c1 = g.C.row(t1);
@@ -359,10 +389,13 @@ double midpoint_nearfield_energy(const FaceGeom &g,
                 const Vec3 chord = c1 - c2;
                 const double num = std::pow(std::abs(n1.dot(chord)), alpha);
                 const double den = std::pow(chord.squaredNorm(), alpha);
-                phi += a1 * a2 * num / den;
+                local_phi += a1 * a2 * num / den;
             }
         }
+        partial[static_cast<size_t>(omp_thread_index())] += local_phi;
     }
+    double phi = 0.0;
+    for (double p : partial) phi += p;
     return phi;
 }
 
@@ -392,11 +425,29 @@ void accumulate_admissible_gradient(const MeshData &mesh,
                                     Eigen::MatrixXd &G) {
     const int nf = static_cast<int>(g.A.size());
 
-    Eigen::VectorXd dE_da_face = Eigen::VectorXd::Zero(nf);
-    Eigen::MatrixXd dE_dc_face = Eigen::MatrixXd::Zero(nf, 3);
-    Eigen::MatrixXd dE_dn_face = Eigen::MatrixXd::Zero(nf, 3);
+    const int n_threads = omp_thread_count();
+    std::vector<Eigen::VectorXd> tls_da;
+    std::vector<Eigen::MatrixXd> tls_dc;
+    std::vector<Eigen::MatrixXd> tls_dn;
+    tls_da.reserve(static_cast<size_t>(n_threads));
+    tls_dc.reserve(static_cast<size_t>(n_threads));
+    tls_dn.reserve(static_cast<size_t>(n_threads));
+    for (int t = 0; t < n_threads; ++t) {
+        tls_da.push_back(Eigen::VectorXd::Zero(nf));
+        tls_dc.push_back(Eigen::MatrixXd::Zero(nf, 3));
+        tls_dn.push_back(Eigen::MatrixXd::Zero(nf, 3));
+    }
 
-    for (const ClusterPair &cp : bp.admissible) {
+    const int n_pairs = static_cast<int>(bp.admissible.size());
+#pragma omp parallel for schedule(static)
+    for (int pair_idx = 0; pair_idx < n_pairs; ++pair_idx) {
+        const ClusterPair &cp = bp.admissible[static_cast<size_t>(pair_idx)];
+        Eigen::VectorXd &dE_da_face =
+            tls_da[static_cast<size_t>(omp_thread_index())];
+        Eigen::MatrixXd &dE_dc_face =
+            tls_dc[static_cast<size_t>(omp_thread_index())];
+        Eigen::MatrixXd &dE_dn_face =
+            tls_dn[static_cast<size_t>(omp_thread_index())];
         const BVHNode &U = bvh.nodes[cp.u];
         const BVHNode &V = bvh.nodes[cp.v];
         const double aU = U.area;
@@ -442,6 +493,15 @@ void accumulate_admissible_gradient(const MeshData &mesh,
         }
     }
 
+    Eigen::VectorXd dE_da_face = Eigen::VectorXd::Zero(nf);
+    Eigen::MatrixXd dE_dc_face = Eigen::MatrixXd::Zero(nf, 3);
+    Eigen::MatrixXd dE_dn_face = Eigen::MatrixXd::Zero(nf, 3);
+    for (int tid = 0; tid < n_threads; ++tid) {
+        dE_da_face += tls_da[static_cast<size_t>(tid)];
+        dE_dc_face += tls_dc[static_cast<size_t>(tid)];
+        dE_dn_face += tls_dn[static_cast<size_t>(tid)];
+    }
+
     for (int t = 0; t < nf; ++t) {
         if (dE_da_face(t) == 0.0 && dE_dc_face.row(t).isZero() &&
             dE_dn_face.row(t).isZero()) {
@@ -469,7 +529,19 @@ void accumulate_nearfield_midpoint_gradient(
     double alpha,
     const std::vector<std::array<Vec3, 3>> &E,
     Eigen::MatrixXd &G) {
-    for (const ClusterPair &cp : bp.near_field) {
+    const int n_threads = omp_thread_count();
+    std::vector<Eigen::MatrixXd> tls_G;
+    tls_G.reserve(static_cast<size_t>(n_threads));
+    for (int t = 0; t < n_threads; ++t) {
+        tls_G.push_back(Eigen::MatrixXd::Zero(G.rows(), G.cols()));
+    }
+
+    const int n_pairs = static_cast<int>(bp.near_field.size());
+#pragma omp parallel for schedule(static)
+    for (int pair_idx = 0; pair_idx < n_pairs; ++pair_idx) {
+        Eigen::MatrixXd &G_local =
+            tls_G[static_cast<size_t>(omp_thread_index())];
+        const ClusterPair &cp = bp.near_field[static_cast<size_t>(pair_idx)];
         const BVHNode &U = bvh.nodes[cp.u];
         const BVHNode &V = bvh.nodes[cp.v];
         const bool self = (cp.u == cp.v);
@@ -516,15 +588,18 @@ void accumulate_nearfield_midpoint_gradient(
                 const Eigen::RowVector3d dK_dc2_over3 = -dK_dc1_over3;
 
                 for (int k = 0; k < 3; ++k) {
-                    G.row(mesh.F(t1, k)) +=
+                    G_local.row(mesh.F(t1, k)) +=
                         dK_dc1_over3 + dK_dn1 * Jn1[k] + dK_da1 * Ja1[k];
                 }
                 for (int k = 0; k < 3; ++k) {
                     const Eigen::RowVector3d Ja2_k = da_dvk(n2, E[t2][k]);
-                    G.row(mesh.F(t2, k)) += dK_dc2_over3 + dK_da2 * Ja2_k;
+                    G_local.row(mesh.F(t2, k)) += dK_dc2_over3 + dK_da2 * Ja2_k;
                 }
             }
         }
+    }
+    for (int tid = 0; tid < n_threads; ++tid) {
+        G += tls_G[static_cast<size_t>(tid)];
     }
 }
 
@@ -733,9 +808,16 @@ double tpe_energy_bh(const MeshData &mesh,
     }
 
     double phi = admissible_energy(g, bvh, bp, alpha);
-    for (const TpeNearFieldTerm &term : active_cache->near_terms) {
-        phi += adaptive_term_energy(mesh, g, term, alpha);
+    const int n_terms = static_cast<int>(active_cache->near_terms.size());
+    std::vector<double> partial(static_cast<size_t>(omp_thread_count()), 0.0);
+#pragma omp parallel for schedule(static)
+    for (int term_idx = 0; term_idx < n_terms; ++term_idx) {
+        const TpeNearFieldTerm &term =
+            active_cache->near_terms[static_cast<size_t>(term_idx)];
+        partial[static_cast<size_t>(omp_thread_index())] +=
+            adaptive_term_energy(mesh, g, term, alpha);
     }
+    for (double p : partial) phi += p;
     return phi;
 }
 
@@ -793,8 +875,27 @@ Eigen::MatrixXd tpe_gradient_bh(const MeshData &mesh,
     Eigen::MatrixXd G = Eigen::MatrixXd::Zero(nv, 3);
     const auto E = build_opposite_edges(mesh);
     accumulate_admissible_gradient(mesh, g, bvh, bp, alpha, E, G);
-    for (const TpeNearFieldTerm &term : active_cache->near_terms) {
-        accumulate_adaptive_term_gradient(mesh, g, E, term, alpha, G);
+    const int n_threads = omp_thread_count();
+    std::vector<Eigen::MatrixXd> tls_G;
+    tls_G.reserve(static_cast<size_t>(n_threads));
+    for (int tid = 0; tid < n_threads; ++tid) {
+        tls_G.push_back(Eigen::MatrixXd::Zero(nv, 3));
+    }
+    const int n_terms = static_cast<int>(active_cache->near_terms.size());
+#pragma omp parallel for schedule(static)
+    for (int term_idx = 0; term_idx < n_terms; ++term_idx) {
+        const TpeNearFieldTerm &term =
+            active_cache->near_terms[static_cast<size_t>(term_idx)];
+        accumulate_adaptive_term_gradient(
+            mesh,
+            g,
+            E,
+            term,
+            alpha,
+            tls_G[static_cast<size_t>(omp_thread_index())]);
+    }
+    for (int tid = 0; tid < n_threads; ++tid) {
+        G += tls_G[static_cast<size_t>(tid)];
     }
     return G;
 }

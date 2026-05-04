@@ -11,6 +11,7 @@
 
 #include <Eigen/Dense>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -719,6 +720,23 @@ void test_tpe_bh_smooth_mesh_accuracy() {
     }
 }
 
+void test_tpe_bh_energy_deterministic() {
+    std::cout << "-- BH energy deterministic under repeated calls --\n";
+    MeshData m = make_icosphere(3);
+    m.normalize();
+    const FaceGeom g = compute_face_geom(m);
+    const BVH bvh = build_bvh(m, g);
+    const BlockPairs bp = build_bct_self(bvh, 0.5);
+
+    const double phi1 = tpe_energy_bh(g, bvh, bp, 6.0);
+    const double phi2 = tpe_energy_bh(g, bvh, bp, 6.0);
+    const bool byte_equal = std::memcmp(&phi1, &phi2, sizeof(double)) == 0;
+    std::cout << "    phi1 = " << phi1
+              << ", phi2 = " << phi2
+              << ", byte_equal = " << byte_equal << "\n";
+    check(byte_equal, "BH energy is byte-identical across repeated calls");
+}
+
 void test_tpe_bh_theta_sweep_convergence() {
     std::cout << "-- BH -> brute as theta -> 0 (torus, monotone in theta) --\n";
     // Convergence of the 0th-order approximation: smaller theta means fewer
@@ -1392,6 +1410,7 @@ int main() {
     test_bct_scaling();
     test_tpe_bh_theta_zero_matches_brute();
     test_tpe_bh_smooth_mesh_accuracy();
+    test_tpe_bh_energy_deterministic();
     test_tpe_bh_theta_sweep_convergence();
     test_tpe_bh_scale_covariance();
     test_tpe_gradient_bh_theta_zero_matches_brute();

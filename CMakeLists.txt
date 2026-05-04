@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(EIGEN3 REQUIRED eigen3)
 find_package(OpenMesh REQUIRED)
+find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 
 # NanoGUI viewer is optional. Auto-enabled if the submodule has been
@@ -58,6 +59,7 @@ target_include_directories(rsh_core PUBLIC
 target_link_libraries(rsh_core PUBLIC
     OpenMeshCore
     OpenMeshTools
+    OpenMP::OpenMP_CXX
 )
 
 # -- viewer (NanoGUI + OpenGL) ------------------------------------------------
@@ -103,6 +105,9 @@ target_link_libraries(demo_canonical_genus0 PRIVATE rsh_core)
 
 add_executable(demo_compression tests/demo_compression.cpp)
 target_link_libraries(demo_compression PRIVATE rsh_core)
+
+add_executable(bench_openmp_optimize tests/bench_openmp_optimize.cpp)
+target_link_libraries(bench_openmp_optimize PRIVATE rsh_core)
 
 # add_executable(demo_extrapolation tests/demo_extrapolation.cpp)
 # target_link_libraries(demo_extrapolation PRIVATE rsh_core)
