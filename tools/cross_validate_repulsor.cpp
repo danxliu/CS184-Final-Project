@@ -1,4 +1,5 @@
 #include "TPE.h"
+#include "HsPreconditioner.h"
 
 #ifdef RSH_REPULSOR_CBLAS_HEADER
 #include RSH_REPULSOR_CBLAS_HEADER
@@ -62,6 +63,18 @@ struct Row {
     double ratio_bh = 0.0;
 };
 
+struct Tp0Row {
+    std::string mesh;
+    int n_v = 0;
+    int n_f = 0;
+    double theta = 0.0;
+    double direct_rel_l2 = 0.0;
+    double direct_rel_max = 0.0;
+    double best_scale = 0.0;
+    double scaled_rel_l2 = 0.0;
+    double scaled_rel_max = 0.0;
+};
+
 std::vector<double> row_major_vertices(const rsh::MeshData &mesh) {
     std::vector<double> out(static_cast<std::size_t>(mesh.n_vertices()) * 3);
     for (int i = 0; i < mesh.n_vertices(); ++i) {
@@ -111,6 +124,56 @@ double safe_ratio(double num, double den) {
     return num / den;
 }
 
+Eigen::MatrixXd deterministic_vector_field(const rsh::MeshData &mesh) {
+    Eigen::MatrixXd out(mesh.n_vertices(), 3);
+    for (int i = 0; i < mesh.n_vertices(); ++i) {
+        const double x = mesh.V(i, 0);
+        const double y = mesh.V(i, 1);
+        const double z = mesh.V(i, 2);
+        out(i, 0) = std::sin(1.7 * x + 0.3 * y) + 0.2 * z;
+        out(i, 1) = std::cos(0.5 * y - 1.1 * z) + 0.1 * x;
+        out(i, 2) = std::sin(0.7 * z + 0.2 * x) - 0.3 * y;
+    }
+    return out;
+}
+
+std::vector<double> row_major_field(const Eigen::MatrixXd &field) {
+    std::vector<double> out(static_cast<std::size_t>(field.rows()) * 3);
+    for (int i = 0; i < field.rows(); ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out[static_cast<std::size_t>(3 * i + j)] = field(i, j);
+        }
+    }
+    return out;
+}
+
+Eigen::MatrixXd matrix_from_row_major_field(const std::vector<double> &field,
+                                            int n_vertices) {
+    Eigen::MatrixXd out(n_vertices, 3);
+    for (int i = 0; i < n_vertices; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out(i, j) = field[static_cast<std::size_t>(3 * i + j)];
+        }
+    }
+    return out;
+}
+
+double rel_l2(const Eigen::MatrixXd &a, const Eigen::MatrixXd &b) {
+    return (a - b).norm() / std::max(1.0, b.norm());
+}
+
+double rel_max_abs(const Eigen::MatrixXd &a, const Eigen::MatrixXd &b) {
+    double max_num = 0.0;
+    double max_den = 1.0;
+    for (int i = 0; i < a.rows(); ++i) {
+        for (int j = 0; j < a.cols(); ++j) {
+            max_num = std::max(max_num, std::abs(a(i, j) - b(i, j)));
+            max_den = std::max(max_den, std::abs(b(i, j)));
+        }
+    }
+    return max_num / max_den;
+}
+
 Row evaluate(const std::filesystem::path &path,
              double alpha,
              double theta,
@@ -141,6 +204,61 @@ Row evaluate(const std::filesystem::path &path,
 
     row.ratio_brute = safe_ratio(row.ours_brute, row.repulsor_allpairs);
     row.ratio_bh = safe_ratio(row.ours_bh, row.repulsor_bct0);
+    return row;
+}
+
+Tp0Row evaluate_tp0_matvec(const std::filesystem::path &path,
+                           double theta,
+                           int max_leaf_size) {
+    const rsh::MeshData mesh = rsh::MeshData::load_obj(path.string());
+
+    rsh::HsPreconditionerParams params;
+    params.s = 5.0 / 3.0;
+    params.sigma = 1.0;
+    params.theta = theta;
+
+    const Eigen::MatrixXd input = deterministic_vector_field(mesh);
+    const Eigen::MatrixXd ours = rsh::hs_apply_operator(mesh, input, params);
+
+    std::vector<double> x = row_major_field(input);
+    std::vector<double> y(x.size(), 0.0);
+
+    RepulsorMesh rep_mesh = make_repulsor_mesh(mesh, theta, max_leaf_size);
+    const auto &bct = rep_mesh.GetBlockClusterTree();
+    using Traversor = Repulsor::TP0_Traversor<
+        2, 2, typename RepulsorMesh::BlockClusterTree_T,
+        false, false, true, false>;
+    typename Traversor::ValueContainer_T metric_values;
+
+    Traversor compute_traversor(bct, metric_values, 6.0, 12.0);
+    (void)compute_traversor.Compute();
+
+    const auto &S = bct.GetS();
+    const auto &T = bct.GetT();
+    T.Pre(x.data(), 3, 3, Repulsor::OperatorType::MixedOrder);
+    S.RequireBuffers(T.BufferDim());
+
+    Traversor multiply_traversor(bct, metric_values, 6.0, 12.0);
+    multiply_traversor.MultiplyMetric(true, true, true);
+    S.Post(1.0, 0.0, y.data(), 3, Repulsor::OperatorType::MixedOrder);
+
+    const Eigen::MatrixXd rep = matrix_from_row_major_field(y, mesh.n_vertices());
+
+    Tp0Row row;
+    row.mesh = path.filename().string();
+    row.n_v = mesh.n_vertices();
+    row.n_f = mesh.n_faces();
+    row.theta = theta;
+    row.direct_rel_l2 = rel_l2(ours, rep);
+    row.direct_rel_max = rel_max_abs(ours, rep);
+
+    const double rep_sq = rep.squaredNorm();
+    row.best_scale = (rep_sq > 0.0)
+        ? (ours.array() * rep.array()).sum() / rep_sq
+        : std::numeric_limits<double>::quiet_NaN();
+    const Eigen::MatrixXd scaled_rep = row.best_scale * rep;
+    row.scaled_rel_l2 = rel_l2(ours, scaled_rep);
+    row.scaled_rel_max = rel_max_abs(ours, scaled_rep);
     return row;
 }
 
@@ -185,6 +303,34 @@ bool check_row(const Row &row) {
     return ok;
 }
 
+void write_tp0_header(std::ostream &out) {
+    out << "mesh,n_v,n_f,theta,direct_rel_l2,direct_rel_max,"
+           "best_scale,scaled_rel_l2,scaled_rel_max\n";
+}
+
+void write_tp0_row(std::ostream &out, const Tp0Row &row) {
+    out << row.mesh << ',' << row.n_v << ',' << row.n_f << ','
+        << row.theta << ',' << row.direct_rel_l2 << ','
+        << row.direct_rel_max << ',' << row.best_scale << ','
+        << row.scaled_rel_l2 << ',' << row.scaled_rel_max << '\n';
+}
+
+bool check_tp0_row(const Tp0Row &row) {
+    const bool direct_ok =
+        std::isfinite(row.direct_rel_max) && row.direct_rel_max < 1e-10;
+    const bool scaled_ok =
+        std::isfinite(row.scaled_rel_max) && row.scaled_rel_max < 1e-10;
+    if (!direct_ok && !scaled_ok) {
+        std::cerr << "FAIL TP0 matvec parity for " << row.mesh
+                  << " theta=" << row.theta
+                  << ": direct_rel_max=" << row.direct_rel_max
+                  << ", best_scale=" << row.best_scale
+                  << ", scaled_rel_max=" << row.scaled_rel_max << '\n';
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -192,12 +338,19 @@ int main(int argc, char **argv) {
     const int max_leaf_size = 1;
     const std::vector<double> thetas = {0.0, 0.25, 0.5};
 
+    bool tp0_only = false;
     std::vector<std::filesystem::path> meshes;
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
-            meshes.emplace_back(argv[i]);
+            const std::string arg = argv[i];
+            if (arg == "--tp0-only") {
+                tp0_only = true;
+            } else {
+                meshes.emplace_back(arg);
+            }
         }
-    } else {
+    }
+    if (meshes.empty()) {
         // Repulsor BCT0 showed an order-dependent NaN on torus_12x8 when
         // that smaller mesh was evaluated after the icospheres in one process.
         meshes = {
@@ -208,29 +361,51 @@ int main(int argc, char **argv) {
     }
 
     std::filesystem::create_directories("out/cross_val_repulsor");
-    std::ofstream csv("out/cross_val_repulsor/results.csv");
-    if (!csv) {
-        std::cerr << "failed to open out/cross_val_repulsor/results.csv\n";
+    std::cout << std::setprecision(17);
+
+    bool ok = true;
+    if (!tp0_only) {
+        std::ofstream csv("out/cross_val_repulsor/results.csv");
+        if (!csv) {
+            std::cerr << "failed to open out/cross_val_repulsor/results.csv\n";
+            return 1;
+        }
+        csv << std::setprecision(17);
+        write_header(std::cout);
+        write_header(csv);
+
+        for (const std::filesystem::path &mesh_path : meshes) {
+            if (!std::filesystem::exists(mesh_path)) {
+                std::cerr << "missing mesh: " << mesh_path << '\n';
+                return 1;
+            }
+            for (double theta : thetas) {
+                const Row row = evaluate(mesh_path, alpha, theta, max_leaf_size);
+                write_row(std::cout, row);
+                write_row(csv, row);
+                ok = check_row(row) && ok;
+            }
+        }
+    }
+
+    std::ofstream tp0_csv("out/cross_val_repulsor/tp0_matvec.csv");
+    if (!tp0_csv) {
+        std::cerr << "failed to open out/cross_val_repulsor/tp0_matvec.csv\n";
         return 1;
     }
 
-    std::cout << std::setprecision(17);
-    csv << std::setprecision(17);
-    write_header(std::cout);
-    write_header(csv);
-
-    bool ok = true;
+    std::cout << "\nTP0 matvec parity at theta=0\n";
+    write_tp0_header(std::cout);
+    write_tp0_header(tp0_csv);
     for (const std::filesystem::path &mesh_path : meshes) {
         if (!std::filesystem::exists(mesh_path)) {
             std::cerr << "missing mesh: " << mesh_path << '\n';
             return 1;
         }
-        for (double theta : thetas) {
-            const Row row = evaluate(mesh_path, alpha, theta, max_leaf_size);
-            write_row(std::cout, row);
-            write_row(csv, row);
-            ok = check_row(row) && ok;
-        }
+        const Tp0Row row = evaluate_tp0_matvec(mesh_path, 0.0, max_leaf_size);
+        write_tp0_row(std::cout, row);
+        write_tp0_row(tp0_csv, row);
+        ok = check_tp0_row(row) && ok;
     }
 
     return ok ? 0 : 2;

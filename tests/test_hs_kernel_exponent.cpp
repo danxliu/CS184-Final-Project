@@ -1477,6 +1477,77 @@ void test_vector_sandwich_resolution_diagnostics() {
           "vector Repulsor-style left H1 sandwich iterations stay resolution-stable");
 }
 
+void test_icosphere5_left_h1_probe() {
+    std::cout << "-- icosphere_5 Repulsor-style left-H1 production-size probe --\n";
+    const double s = 5.0 / 3.0;
+    const double theta = 0.25;
+
+    auto scalar_rhs = [](const rsh::MeshData &mesh) {
+        return Eigen::VectorXd(
+            mesh.V.col(0) + 0.3 * mesh.V.col(1) - 0.2 * mesh.V.col(2));
+    };
+    auto vector_rhs = [](const rsh::MeshData &mesh) {
+        Eigen::MatrixXd rhs(mesh.n_vertices(), 3);
+        rhs.col(0) = mesh.V.col(0) + 0.3 * mesh.V.col(1);
+        rhs.col(1) = mesh.V.col(1) - 0.2 * mesh.V.col(2);
+        rhs.col(2) = mesh.V.col(2) + 0.1 * mesh.V.col(0);
+        return rhs;
+    };
+
+    rsh::MeshData mesh2 = rsh::make_icosphere(2);
+    mesh2.L0 = mesh2.compute_L0();
+    rsh::MeshData mesh5 = rsh::make_icosphere(5);
+    mesh5.L0 = mesh5.compute_L0();
+
+    const SolveStats scalar2 = solve_with_left_sandwich(
+        mesh2, scalar_rhs(mesh2), s, theta, 250, 1e-5,
+        rsh::HsLaplacianInverseMode::H1Metric,
+        rsh::HsConstantProjectionMode::None);
+    const SolveStats scalar5 = solve_with_left_sandwich(
+        mesh5, scalar_rhs(mesh5), s, theta, 250, 1e-5,
+        rsh::HsLaplacianInverseMode::H1Metric,
+        rsh::HsConstantProjectionMode::None);
+    const VectorSolveStats vector2 = solve_vector_with_left_sandwich(
+        mesh2, vector_rhs(mesh2), s, theta, 250, 1e-5,
+        rsh::HsLaplacianInverseMode::H1Metric,
+        rsh::HsConstantProjectionMode::None);
+    const VectorSolveStats vector5 = solve_vector_with_left_sandwich(
+        mesh5, vector_rhs(mesh5), s, theta, 250, 1e-5,
+        rsh::HsLaplacianInverseMode::H1Metric,
+        rsh::HsConstantProjectionMode::None);
+
+    const double scalar_growth =
+        static_cast<double>(scalar5.iterations) /
+        std::max(1, scalar2.iterations);
+    const double vector_growth =
+        static_cast<double>(vector5.iterations) /
+        std::max(1, vector2.iterations);
+
+    std::cout << "    scalar icosphere_2,n_v=" << mesh2.n_vertices()
+              << ",iter=" << scalar2.iterations
+              << ",orig_residual=" << scalar2.residual << "\n";
+    std::cout << "    scalar icosphere_5,n_v=" << mesh5.n_vertices()
+              << ",iter=" << scalar5.iterations
+              << ",orig_residual=" << scalar5.residual
+              << ",growth_2_to_5=" << scalar_growth << "\n";
+    std::cout << "    vector icosphere_2,n_v=" << mesh2.n_vertices()
+              << ",iter=" << vector2.iterations
+              << ",orig_residual=" << vector2.residual << "\n";
+    std::cout << "    vector icosphere_5,n_v=" << mesh5.n_vertices()
+              << ",iter=" << vector5.iterations
+              << ",orig_residual=" << vector5.residual
+              << ",growth_2_to_5=" << vector_growth << "\n";
+
+    check(scalar5.iterations <= 15,
+          "scalar left-H1 icosphere_5 iterations stay production-feasible");
+    check(vector5.iterations <= 15,
+          "vector left-H1 icosphere_5 iterations stay production-feasible");
+    check(scalar_growth <= 2.0,
+          "scalar left-H1 icosphere_2->5 growth stays stable");
+    check(vector_growth <= 2.0,
+          "vector left-H1 icosphere_2->5 growth stays stable");
+}
+
 void test_compression_gradient_descent_safeguard() {
     std::cout << "-- compression-gradient descent safeguard smoke --\n";
     rsh::MeshData m_left = rsh::make_icosphere(2);
@@ -1606,6 +1677,7 @@ int main() {
     test_sandwich_solver_sanity();
     test_sandwich_resolution_diagnostics();
     test_vector_sandwich_resolution_diagnostics();
+    test_icosphere5_left_h1_probe();
     test_compression_gradient_descent_safeguard();
     test_nullspace_and_spd();
 

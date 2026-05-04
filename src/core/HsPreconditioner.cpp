@@ -892,6 +892,23 @@ HsOperators build_hs_operators(const MeshData &mesh) {
     return out;
 }
 
+Eigen::MatrixXd hs_apply_operator(
+    const MeshData &mesh,
+    const Eigen::MatrixXd &field,
+    const HsPreconditionerParams &params) {
+    if (field.rows() != mesh.n_vertices() || field.cols() != 3) {
+        throw std::runtime_error(
+            "hs_apply_operator: field must have shape (n_vertices x 3)");
+    }
+
+    const HsOperators hs = build_hs_operators(mesh);
+    const FaceGeom g = compute_face_geom(mesh);
+    const BVH bvh = build_bvh(mesh, g);
+    const BlockPairs bp = build_bct_self(bvh, params.theta);
+    const HsOperator op(mesh, params, hs, g, bvh, bp);
+    return op.apply(field);
+}
+
 HsDirectionResult hs_preconditioned_direction(
     const MeshData &mesh,
     const Eigen::MatrixXd &gradient,

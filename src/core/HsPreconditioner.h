@@ -43,6 +43,14 @@ HsDirectionResult hs_preconditioned_direction(
     const Eigen::MatrixXd &gradient,
     const HsPreconditionerParams &params = HsPreconditionerParams());
 
+// Validation/helper API: apply the matrix-free H^s operator A = B + B_0 to a
+// per-vertex 3-vector field. Production descent should normally call
+// hs_preconditioned_direction instead.
+Eigen::MatrixXd hs_apply_operator(
+    const MeshData &mesh,
+    const Eigen::MatrixXd &field,
+    const HsPreconditionerParams &params = HsPreconditionerParams());
+
 } // namespace rsh
 
 #endif
