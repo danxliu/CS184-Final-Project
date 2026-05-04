@@ -9,6 +9,7 @@
 #include "Constraints.h"
 #include "FaceGeom.h"
 #include "HsPreconditioner.h"
+#include "OptimizeTPE.h"
 #include "Remesh.h"
 #include "TPE.h"
 
@@ -16,11 +17,15 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <random>
 #include <set>
+#include <sstream>
+#include <string>
 #include <vector>
 
 using namespace rsh;
@@ -193,6 +198,63 @@ MeshData deterministically_perturbed_icosphere(int subdiv) {
         m.V.row(i) += (amp * s * p.normalized()).transpose();
     }
     return m;
+}
+
+MeshData make_scaled_icosphere(int subdiv) {
+    MeshData m = make_icosphere(subdiv);
+    m.V.col(0) *= 1.7;
+    m.V.col(1) *= 0.75;
+    m.V.col(2) *= 0.75;
+    m.normalize();
+    return m;
+}
+
+double bbox_aspect(const MeshData &m) {
+    const Eigen::Vector3d mn = m.V.colwise().minCoeff();
+    const Eigen::Vector3d mx = m.V.colwise().maxCoeff();
+    const Eigen::Vector3d ext = (mx - mn).eval();
+    const double min_ext = ext.minCoeff();
+    if (!(min_ext > 0.0)) return std::numeric_limits<double>::infinity();
+    return ext.maxCoeff() / min_ext;
+}
+
+double tpe_energy_for_test(const MeshData &m, double alpha, double theta) {
+    const FaceGeom g = compute_face_geom(m);
+    const BVH bvh = build_bvh(m, g);
+    const BlockPairs bp = build_bct_self(bvh, theta);
+    return tpe_energy_bh(g, bvh, bp, alpha);
+}
+
+void reset_test_dir(const std::string &dir) {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+}
+
+struct EnergyRow {
+    int iter = 0;
+    double energy = 0.0;
+    double grad_norm = 0.0;
+    double step_size = 0.0;
+    int n_backtracks = 0;
+    int did_remesh = 0;
+};
+
+std::vector<EnergyRow> read_energy_rows(const std::string &path) {
+    std::ifstream in(path);
+    std::vector<EnergyRow> rows;
+    std::string line;
+    std::getline(in, line);
+    while (std::getline(in, line)) {
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        EnergyRow r;
+        if (iss >> r.iter >> r.energy >> r.grad_norm >> r.step_size >>
+            r.n_backtracks >> r.did_remesh) {
+            rows.push_back(r);
+        }
+    }
+    return rows;
 }
 
 void test_interpolation_decreases_energy() {
@@ -641,6 +703,106 @@ void test_remesh_full_icosphere3_quality() {
     check(q.edge_manifold, "icosphere_3 full remesh remains edge-manifold");
 }
 
+void test_optimize_tpe_empty_call() {
+    std::cout << "-- optimize_tpe empty-call sanity --\n";
+    MeshData m = make_scaled_icosphere(2);
+    OptimizeTPEParams p;
+    p.max_iters = 0;
+    const OptimizeTPEResult r = optimize_tpe(m, p);
+    const double vertex_delta = (r.final_mesh.V - m.V).norm();
+    std::cout << "    iterations = " << r.iterations_completed
+              << ", vertex_delta = " << vertex_delta
+              << ", stop = " << r.stop_reason << "\n";
+    check(r.iterations_completed == 0, "empty optimize_tpe returns zero iterations");
+    check(vertex_delta == 0.0, "empty optimize_tpe leaves vertices unchanged");
+}
+
+void test_optimize_tpe_single_iteration() {
+    std::cout << "-- optimize_tpe single iteration --\n";
+    const std::string out_dir = "/tmp/rsh_opt_single";
+    reset_test_dir(out_dir);
+    MeshData m = make_scaled_icosphere(2);
+    const Eigen::RowVector3d c0 = m.V.colwise().mean();
+    OptimizeTPEParams p;
+    p.max_iters = 1;
+    p.out_dir = out_dir;
+    const double e0 = tpe_energy_for_test(m, p.tpe_alpha, p.bvh_theta);
+    const OptimizeTPEResult r = optimize_tpe(m, p);
+    const double drift = (r.final_mesh.V.colwise().mean() - c0).norm();
+    const bool frame_written =
+        std::filesystem::exists(out_dir + "/frame_0001.obj");
+    std::cout << "    E0 = " << e0
+              << ", E1 = " << r.final_energy
+              << ", drift = " << drift
+              << ", frame_0001 = " << frame_written << "\n";
+    check(r.final_energy < e0, "single optimize_tpe step decreases energy");
+    check(drift < 1e-12, "single optimize_tpe step preserves barycenter");
+    check(frame_written, "single optimize_tpe writes frame_0001.obj");
+}
+
+void test_optimize_tpe_icosphere2_twenty_iters() {
+    std::cout << "-- optimize_tpe 20-iter icosphere_2 smoke --\n";
+    const std::string out_dir = "/tmp/rsh_opt_ico2";
+    reset_test_dir(out_dir);
+    MeshData m = make_scaled_icosphere(2);
+    const Eigen::RowVector3d c0 = m.V.colwise().mean();
+    OptimizeTPEParams p;
+    p.max_iters = 20;
+    p.out_dir = out_dir;
+    const OptimizeTPEResult r = optimize_tpe(m, p);
+    const std::vector<EnergyRow> rows = read_energy_rows(out_dir + "/energy.csv");
+    bool monotone = rows.size() >= 2;
+    int max_bt = 0;
+    int remesh_rows = 0;
+    for (size_t i = 1; i < rows.size(); ++i) {
+        monotone = monotone && rows[i].energy <= rows[i - 1].energy + 1e-8;
+        max_bt = std::max(max_bt, rows[i].n_backtracks);
+        remesh_rows += rows[i].did_remesh;
+    }
+    const double drift = (r.final_mesh.V.colwise().mean() - c0).norm();
+    std::cout << "    rows = " << rows.size()
+              << ", final_E = " << r.final_energy
+              << ", remeshes = " << r.remeshes_completed
+              << ", max_bt = " << max_bt
+              << ", drift = " << drift << "\n";
+    check(monotone, "20-iter optimize_tpe energy log is monotone");
+    check(max_bt <= p.armijo_max_backtracks, "20-iter optimize_tpe backtracks stay capped");
+    check(drift < 1e-10, "20-iter optimize_tpe preserves barycenter");
+    check(r.remeshes_completed >= 1 && remesh_rows >= 1,
+          "20-iter optimize_tpe fires remeshing");
+}
+
+void test_optimize_tpe_icosphere3_fifty_iters() {
+    std::cout << "-- optimize_tpe 50-iter icosphere_3 completion smoke --\n";
+    const std::string out_dir = "/tmp/rsh_opt_ico3";
+    reset_test_dir(out_dir);
+    MeshData m = make_scaled_icosphere(3);
+    const double e0 = tpe_energy_for_test(m, 6.0, 0.5);
+    const double aspect0 = bbox_aspect(m);
+    const int f0 = m.n_faces();
+    OptimizeTPEParams p;
+    p.max_iters = 50;
+    p.out_dir = out_dir;
+    const OptimizeTPEResult r = optimize_tpe(m, p);
+    const MeshQuality q = measure_mesh_quality(r.final_mesh);
+    const double aspect1 = bbox_aspect(r.final_mesh);
+    std::cout << "    E0 = " << e0
+              << ", E1 = " << r.final_energy
+              << ", aspect0 = " << aspect0
+              << ", aspect1 = " << aspect1
+              << ", remeshes = " << r.remeshes_completed
+              << ", faces = " << r.final_mesh.n_faces() << "\n";
+    check(r.final_energy <= 0.5 * e0,
+          "50-iter optimize_tpe cuts icosphere_3 energy by at least half");
+    check(std::abs(aspect1 - 1.0) < std::abs(aspect0 - 1.0),
+          "50-iter optimize_tpe moves bbox aspect ratio toward one");
+    check(r.remeshes_completed >= 5, "50-iter optimize_tpe fires five remeshes");
+    check(q.edge_manifold, "50-iter optimize_tpe final mesh remains edge-manifold");
+    check(r.final_mesh.n_faces() >= 0.5 * f0 &&
+              r.final_mesh.n_faces() <= 2.0 * f0,
+          "50-iter optimize_tpe face count remains bounded");
+}
+
 } // namespace
 
 int main() {
@@ -660,6 +822,10 @@ int main() {
     test_remesh_tangential_smooth_tangent_plane();
     test_remesh_full_icosphere2_quality();
     test_remesh_full_icosphere3_quality();
+    test_optimize_tpe_empty_call();
+    test_optimize_tpe_single_iteration();
+    test_optimize_tpe_icosphere2_twenty_iters();
+    test_optimize_tpe_icosphere3_fifty_iters();
     test_interpolation_decreases_energy();
     test_extrapolation_stability();
     test_extrapolation_with_repulsion();
