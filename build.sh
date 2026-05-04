@@ -27,6 +27,16 @@ EXTRA_INCLUDES=$(ls -d \
 
 export CPATH="${EXTRA_INCLUDES}${CPATH:+:$CPATH}"
 
+EXTRA_LIBS=$(ls -d \
+    /nix/store/*dbus*-lib/lib \
+    /nix/store/*dbus*/lib \
+    2>/dev/null | tr '\n' ':' | sed 's/:$//')
+
+if [ -n "$EXTRA_LIBS" ]; then
+    export LIBRARY_PATH="${EXTRA_LIBS}${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${EXTRA_LIBS}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 if [ ! -f build/Makefile ] && [ ! -f build/build.ninja ]; then
     cmake -S . -B build -DRSH_ENABLE_VIEWER=ON
 fi

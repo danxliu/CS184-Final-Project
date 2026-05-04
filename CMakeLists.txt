@@ -11,6 +11,12 @@ find_package(OpenMesh REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 
+# GLFW subprojects cache these as absolute paths on the Nix glibc in some
+# mixed host/devenv shells. Keep them as regular linker flags so viewer
+# executables do not get a Nix-glibc runtime rpath mixed with host libstdc++.
+set(RT_LIBRARY rt CACHE STRING "" FORCE)
+set(MATH_LIBRARY m CACHE STRING "" FORCE)
+
 # NanoGUI viewer is optional. Auto-enabled if the submodule has been
 # initialized; force-disable with -DRSH_ENABLE_VIEWER=OFF for headless builds
 # (CI, remote boxes without a GL stack, etc.).
@@ -73,6 +79,31 @@ else()
     message(STATUS
         "ext/nanogui not found; skipping viewer. "
         "Run `git submodule update --init --recursive` to enable it.")
+endif()
+
+# -- Polyscope viewer (optional) ---------------------------------------------
+option(RSH_ENABLE_POLYSCOPE "Build Polyscope-based viewer" OFF)
+if(RSH_ENABLE_POLYSCOPE)
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/ext/polyscope/CMakeLists.txt")
+        message(FATAL_ERROR
+            "RSH_ENABLE_POLYSCOPE=ON but ext/polyscope is missing. "
+            "Run `git submodule update --init --recursive`.")
+    endif()
+    # Keep the opt-in viewer on the GLFW backend; do not require EGL headers in
+    # the default Nix/dev shell.
+    set(POLYSCOPE_BACKEND_OPENGL3_EGL OFF CACHE STRING "" FORCE)
+    add_subdirectory(ext/polyscope)
+
+    add_executable(polyscope_viewer tools/polyscope_viewer.cpp)
+    target_link_libraries(polyscope_viewer PRIVATE rsh_core polyscope)
+    file(GLOB RSH_DBUS_CANDIDATES
+        "/nix/store/*dbus*-lib/lib/libdbus-1.so"
+        "/nix/store/*dbus*/lib/libdbus-1.so")
+    if(RSH_DBUS_CANDIDATES)
+        list(SORT RSH_DBUS_CANDIDATES)
+        list(GET RSH_DBUS_CANDIDATES 0 RSH_DBUS_LIBRARY)
+        target_link_libraries(polyscope_viewer PRIVATE ${RSH_DBUS_LIBRARY})
+    endif()
 endif()
 
 # -- test / utility binaries --------------------------------------------------
