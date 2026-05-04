@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Limitless: Infinity | CS 184 Final Report</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        />
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+            onload="
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                    ],
+                })
+            "
+        ></script>
+        <style>
+            :root {
+                --bg: #f0f2f5;
+                --surface: #e6e9ee;
+                --border: #cdd2d9;
+                --text: #1e2a38;
+                --text-dim: #4a5568;
+                --label: #8896a7;
+                --nav-bg: rgba(240, 242, 245, 0.9);
+            }
+            .dark {
+                --bg: #191d24;
+                --surface: #21262e;
+                --border: #2e3440;
+                --text: #bfc5ce;
+                --text-dim: #8891a0;
+                --label: #5c6470;
+                --nav-bg: rgba(25, 29, 36, 0.9);
+            }
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html {
+                scroll-behavior: smooth;
+            }
+
+            body {
+                font-family: "Alegreya Sans", sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                line-height: 1.75;
+                font-size: 18.5px;
+                font-weight: 400;
+                -webkit-font-smoothing: antialiased;
+                transition:
+                    background 0.3s,
+                    color 0.3s;
+            }
+
+            ::selection {
+                background: var(--text);
+                color: var(--bg);
+            }
+
+            nav {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 100;
+                padding: 1rem 2rem;
+                display: flex;
+                gap: 1.5rem;
+                align-items: center;
+                background: var(--nav-bg);
+                backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--border);
+                font-size: 0.82rem;
+                letter-spacing: 0.03em;
+            }
+            nav a {
+                color: var(--text-dim);
+                text-decoration: none;
+                transition: color 0.2s;
+            }
+            nav a:hover {
+                color: var(--text);
+            }
+            nav .brand {
+                color: var(--text);
+                font-weight: 500;
+                margin-right: auto;
+                font-size: 0.85rem;
+            }
+
+            .hero {
+                min-height: 60vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding: 7rem 2rem 3rem;
+                max-width: 860px;
+                margin: 0 auto;
+            }
+            .hero-label {
+                font-size: 0.75rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 1.5rem;
+            }
+            .hero h1 {
+                font-size: clamp(2.5rem, 7vw, 4.5rem);
+                line-height: 1.05;
+                font-weight: 400;
+                margin-bottom: 1rem;
+                letter-spacing: -0.02em;
+            }
+            .hero-sub {
+                font-size: 1.05rem;
+                color: var(--text-dim);
+                max-width: 660px;
+                line-height: 1.75;
+                margin-bottom: 2rem;
+            }
+            .team {
+                display: flex;
+                gap: 2rem;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .team-member .name {
+                font-weight: 500;
+                font-size: 0.92rem;
+            }
+            .content {
+                max-width: 740px;
+                margin: 0 auto;
+                padding: 0 2rem 6rem;
+            }
+            section {
+                margin-bottom: 3.5rem;
+            }
+
+            .section-num {
+                font-size: 0.7rem;
+                color: var(--label);
+                letter-spacing: 0.15em;
+                text-transform: uppercase;
+                margin-bottom: 0.5rem;
+            }
+            h2 {
+                font-size: 1.65rem;
+                font-weight: 400;
+                margin-bottom: 1.25rem;
+                line-height: 1.2;
+            }
+            h3 {
+                font-size: 0.98rem;
+                font-weight: 600;
+                margin-top: 1.75rem;
+                margin-bottom: 0.4rem;
+                color: var(--text);
+            }
+            p {
+                margin-bottom: 1rem;
+                color: var(--text-dim);
+            }
+            p strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            a {
+                color: var(--text);
+                text-decoration: underline;
+                text-decoration-color: var(--border);
+                text-underline-offset: 3px;
+                transition: text-decoration-color 0.2s;
+            }
+            a:hover {
+                text-decoration-color: var(--text);
+            }
+            code {
+                font-family:
+                    "SF Mono", "Consolas", "Menlo", ui-monospace, monospace;
+                font-size: 0.88em;
+                color: var(--text);
+                background: var(--surface);
+                padding: 0.05em 0.35em;
+                border-radius: 2px;
+            }
+            .plot {
+                margin: 1.25rem 0 0.5rem;
+                padding: 0.75rem;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 3px;
+            }
+            .plot img {
+                width: 100%;
+                height: auto;
+                display: block;
+                border-radius: 2px;
+            }
+            .plot-caption {
+                font-size: 0.82rem;
+                color: var(--text-dim);
+                margin-top: 0.6rem;
+                line-height: 1.55;
+            }
+            .week {
+                display: grid;
+                grid-template-columns: 90px 1fr;
+                gap: 1.5rem;
+                padding: 1rem 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .week:last-child {
+                border-bottom: none;
+            }
+            .week-label {
+                font-size: 0.78rem;
+                color: var(--text);
+                padding-top: 0.1rem;
+            }
+            .week-content {
+                font-size: 0.97rem;
+                color: var(--text-dim);
+                line-height: 1.65;
+            }
+            .week-content strong {
+                color: var(--text);
+                font-weight: 500;
+            }
+            .divider {
+                height: 1px;
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    var(--border),
+                    transparent
+                );
+                margin: 3rem 0;
+            }
+            .links {
+                display: flex;
+                gap: 1.25rem;
+                flex-wrap: wrap;
+                margin-top: 1rem;
+                font-size: 0.9rem;
+            }
+            ul {
+                margin: 0.4rem 0 1.2rem 1.2rem;
+                color: var(--text-dim);
+            }
+            li {
+                margin-bottom: 0.35rem;
+            }
+
+            @media (max-width: 640px) {
+                .week {
+                    grid-template-columns: 1fr;
+                    gap: 0.3rem;
+                }
+                .team {
+                    flex-direction: column;
+                    gap: 0.75rem;
+                    align-items: flex-start;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <span
+                class="brand"
+                id="dark-toggle"
+                style="cursor: pointer; line-height: 0"
+                ><svg
+                    width="24"
+                    height="14"
+                    viewBox="0 0 24 14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                >
+                    <path
+                        d="M12 7C12 4 9.5 1 6.5 1S1 4 1 7s2.5 6 5.5 6S12 10 12 7Zm0 0c0 3 2.5 6 5.5 6S23 10 23 7s-2.5-6-5.5-6S12 4 12 7Z"
+                    /></svg
+            ></span>
+            <a href="#abstract">Abstract</a>
+            <a href="#approach">Technical approach</a>
+            <a href="#results">Results</a>
+            <a href="#references">References</a>
+        </nav>
+
+        <div class="hero">
+            <div class="hero-label">CS 184 · Spring 2026 · Final Report</div>
+            <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
+            <p class="hero-sub">
+                A C++ implementation of the Repulsive Shells pipeline for
+                collision-free shape optimization, with Barnes-Hut acceleration,
+                Sobolev preconditioning, remeshing, and end-to-end demo/test
+                coverage on a CPU/OpenMP implementation.
+            </p>
+            <div class="team">
+                <span
+                    style="
+                        color: var(--text-dim);
+                        font-size: 0.92rem;
+                        font-weight: 500;
+                    "
+                    >Team:</span
+                >
+                <div class="team-member">
+                    <span class="name">Atharv Sampath</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Michael Pham</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Daniel Liu</span>
+                </div>
+                <div class="team-member">
+                    <span class="name">Elen Papyan</span>
+                </div>
+            </div>
+            <div class="links">
+                <a href="proposal.html">Project proposal</a>
+                <a href="milestone.html">Milestone report</a>
+                <a
+                    href="https://github.com/danxliu/CS184-Final-Project"
+                    target="_blank"
+                    >GitHub repo</a
+                >
+            </div>
+        </div>
+
+        <div class="content">
+            <section id="abstract">
+                <div class="section-num">01: Abstract</div>
+                <h2>Collision-free optimization from a C++ systems build</h2>
+                <p>
+                    We built a CPU/OpenMP-first C++ implementation of major
+                    pieces of the <em>Repulsive Shells</em> pipeline, centered
+                    on tangent-point repulsion to prevent self-intersections
+                    during shape optimization. The pipeline is staged as
+                    follows:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Mesh Representation and Normalization</strong>:
+                        Setting up a stable starting shape.
+                    </li>
+                    <li>
+                        <strong>Face-Geometry Preprocessing</strong>:
+                        Calculating necessary information for each face of the
+                        shape before optimization.
+                    </li>
+                    <li>
+                        <strong>Tangent-Point Energy (TPE)</strong>: Using
+                        repulsive forces to stop the shape from intersecting
+                        with itself.
+                    </li>
+                    <li>
+                        <strong>Barnes-Hut Acceleration</strong>: Speeding up
+                        the repulsion calculations by grouping distant parts of
+                        the shape together using a Bounding Volume Hierarchy
+                        (BVH).
+                    </li>
+                    <li>
+                        <strong>H<sup>s</sup> Preconditioning</strong>: Ensuring
+                        the optimization steps smoothly descend towards a better
+                        shape.
+                    </li>
+                    <li>
+                        <strong>Line Search and Constraints</strong>: Making
+                        sure each update is safe and maintains the required
+                        properties of the shape.
+                    </li>
+                    <li>
+                        <strong>Remeshing</strong>: Keeping the triangles that
+                        make up the shape well-proportioned during the whole
+                        process.
+                    </li>
+                </ul>
+                <p>
+                    This is all wired through a custom core library
+                    (<code>rsh_core</code>) with viewer-backed diagnostics and
+                    regression-tested demos. Final outputs show stable
+                    convergence across baseline flow, preconditioned
+                    optimization, and compression-style sequence optimization.
+                </p>
+            </section>
+
+            <section id="approach">
+                <div class="section-num">02: Technical approach</div>
+                <h2>What we implemented, how, and why</h2>
+
+                <div class="week">
+                    <div class="week-label">Stack</div>
+                    <div class="week-content">
+                        We used Eigen for linear algebra, OpenMesh for half-edge
+                        mesh operations and mesh IO, OpenMP + Threads for
+                        parallelism, and NanoGUI/OpenGL for the viewer. These
+                        provide infrastructure, while the algorithms and
+                        pipeline logic are custom C++ code in
+                        <code>src/core</code>. The build is CMake-based with
+                        optional Polyscope and optional Repulsor
+                        cross-validation tooling.
+                    </div>
+                </div>
+
+                <div class="week">
+                    <div class="week-label">Problems</div>
+                    <div class="week-content">
+                        Throughout the project, we faced and addressed several
+                        key challenges:
+                        <ul>
+                            <li>
+                                <strong>Derivative Mistakes:</strong> Complex
+                                math errors during energy calculations were
+                                caught early by implementing thorough
+                                finite-difference testing.
+                            </li>
+                            <li>
+                                <strong>Poor Descent Directions:</strong>
+                                Stability issues during H<sup>s</sup>
+                                optimization steps were resolved by falling back
+                                to a safer method (identity-preconditioned
+                                GMRES) with explicit diagnostics.
+                            </li>
+                            <li>
+                                <strong>Team Capacity:</strong> A project
+                                partner had to drop the class unexpectedly,
+                                requiring the remaining team members to
+                                reallocate tasks and adapt to the reduced
+                                bandwidth.
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="week">
+                    <div class="week-label">Lessons</div>
+                    <div class="week-content">
+                        For research-grade graphics systems, the biggest
+                        productivity multiplier is a testable architecture: keep
+                        a small exact baseline, layer acceleration only after
+                        validation, and treat numerical fallback paths as
+                        first-class features rather than emergency hacks.
+                        Building from scratch in C++ is feasible for a class
+                        project when scope is staged and each phase has
+                        measurable artifacts.
+                    </div>
+                </div>
+            </section>
+
+            <section id="results">
+                <div class="section-num">03: Results</div>
+                <h2>Final outputs and measured behavior</h2>
+
+                <p>
+                    <strong>Phase 1 Baseline:</strong> This test runs vanilla
+                    gradient descent (L2 flow) on the Barnes-Hut Tangent-Point
+                    Energy starting from an ellipsoid mesh, without any
+                    preconditioner or remeshing. The chart illustrates the
+                    energy decreasing rapidly at first but eventually stalling,
+                    demonstrating the ill-conditioned nature of the L2 gradient
+                    flow that motivates the need for a preconditioner.
+                </p>
+
+                <div class="plot">
+                    <img
+                        src="final_assets/phase1_energy.svg"
+                        alt="Phase 1 L2 baseline energy trend"
+                    />
+                    <div class="plot-caption">
+                        <strong>Phase 1 baseline.</strong> In
+                        <code>out/phase1_flow/energy.csv</code>, energy drops
+                        from 181.414 to 40.9563 over 150 iterations (77.4%
+                        reduction, 4.43x ratio).
+                    </div>
+                </div>
+
+                <p>
+                    <strong>Phase 2 H<sup>s</sup> Flow:</strong> Using the same
+                    ellipsoid setup, this test applies the H<sup>s</sup>
+                    preconditioner to compute the descent direction. The chart
+                    shows a stable, smooth energy descent over a large number of
+                    iterations without stalling, successfully rounding the shape
+                    toward a sphere.
+                </p>
+
+                <div class="plot">
+                    <img
+                        src="final_assets/phase2_energy.svg"
+                        alt="Phase 2 Hs flow energy trend"
+                    />
+                    <div class="plot-caption">
+                        <strong>Phase 2 H<sup>s</sup> flow.</strong> In
+                        <code>out/phase2_hs_flow/energy.csv</code>, energy drops
+                        from 185.402 to 31.4393 over 1000 iterations (83.0%
+                        reduction, 5.90x ratio), with long-run stable descent.
+                    </div>
+                </div>
+
+                <p>
+                    <strong>Compression-Style Optimization:</strong> This test
+                    simulates compression by steadily moving the handle vertices
+                    of two separated meshes towards each other over multiple
+                    frames, while relaxing the free vertices using a combination
+                    of TPE and shell energy. The chart plots the energy trend
+                    across the optimization sequence, showing the energy
+                    dropping as the system resolves collisions and minimizes
+                    shell bending.
+                </p>
+
+                <div class="plot">
+                    <img
+                        src="final_assets/compression_energy.svg"
+                        alt="Compression demo energy trend"
+                    />
+                    <div class="plot-caption">
+                        <strong>Compression-style optimization.</strong> In
+                        <code>out/compress_sequence/energy.csv</code>, energy
+                        drops from 0.300655 to 0.200355 over 1345 optimization
+                        records (33.4% reduction, 1.50x ratio). The
+                        <code>used_identity_fallback</code> field remained zero
+                        in this run.
+                    </div>
+                </div>
+
+                <div class="plot">
+                    <img
+                        src="milestone_assets/energy.png"
+                        alt="Detailed phase flow summary with silhouettes"
+                    />
+                    <div class="plot-caption">
+                        <strong>Detailed diagnostic visualization.</strong> We
+                        also retain the milestone figure for per-iteration
+                        context (energy, gradient norm, step size, and mesh
+                        silhouettes).
+                    </div>
+                </div>
+
+                <h3>Animations</h3>
+                <div>TODO: Add</div>
+            </section>
+
+            <div class="divider"></div>
+
+            <section id="references">
+                <div class="section-num">04: References</div>
+                <h2>Papers, code, and tools</h2>
+
+                <h3>Primary papers</h3>
+                <ul>
+                    <li>
+                        Sassen, Schumacher, Rumpf, Crane (2024).
+                        <em>Repulsive Shells</em>. ACM SIGGRAPH.
+                    </li>
+                    <li>
+                        Yu, Brakensiek, Schumacher, Crane (2021).
+                        <em>Repulsive Surfaces</em>. ACM SIGGRAPH Asia.
+                    </li>
+                    <li>
+                        Yu, Schumacher, Crane (2021).
+                        <em>Repulsive Curves</em>.
+                    </li>
+                    <li>
+                        Strzelecki, von der Mosel (2013).
+                        <em
+                            >Tangent-point repulsive potentials for nonlinear
+                            energies</em
+                        >.
+                    </li>
+                    <li>
+                        Heeren, Rumpf, Wardetzky, Wirth (2012).
+                        <em>Time-Discrete Geodesics in the Space of Shells</em>.
+                    </li>
+                </ul>
+
+                <h3>Implementation dependencies</h3>
+                <ul>
+                    <li>
+                        C++17, CMake, Eigen3, OpenMesh, OpenMP, POSIX Threads
+                    </li>
+                    <li>
+                        Optional: NanoGUI/OpenGL viewer, Polyscope viewer,
+                        BLAS/LAPACK/OpenBLAS for cross-validation targets
+                    </li>
+                    <li>
+                        Nix/devenv tooling for reproducible local environment
+                        setup
+                    </li>
+                </ul>
+            </section>
+        </div>
+
+        <script>
+            document
+                .getElementById("dark-toggle")
+                .addEventListener("click", function () {
+                    document.body.classList.toggle("dark");
+                });
+        </script>
+    </body>
+</html>
+     document
+                .getElementById("dark-toggle")
+                .addEventListener("click", function () {
+                    document.body.classList.toggle("dark");
+                });
+        </script>
+    </body>
+</html>
