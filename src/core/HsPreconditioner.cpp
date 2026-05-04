@@ -1,4 +1,5 @@
 #include "HsPreconditioner.h"
+#include "Constraints.h"
 #include "FaceGeom.h"
 #include "BVH.h"
 #include "BCT.h"
@@ -291,6 +292,16 @@ Eigen::SparseMatrix<double> lifted_laplacian(const HsOperators &hs) {
     lifted += kLift * hs.M;
     lifted.makeCompressed();
     return lifted;
+}
+
+void apply_hs_constraints(Eigen::MatrixXd &field,
+                          const HsConstraints &constraints) {
+    if (constraints.pin_barycenter) {
+        project_barycenter(field);
+    }
+    if (constraints.pin_mask != nullptr) {
+        apply_pin_mask(field, *constraints.pin_mask);
+    }
 }
 
 } // namespace
@@ -912,7 +923,8 @@ Eigen::MatrixXd hs_apply_operator(
 HsDirectionResult hs_preconditioned_direction(
     const MeshData &mesh,
     const Eigen::MatrixXd &gradient,
-    const HsPreconditionerParams &params) {
+    const HsPreconditionerParams &params,
+    const HsConstraints &constraints) {
     const int nv = mesh.n_vertices();
     if (nv <= 0) {
         throw std::runtime_error("hs_preconditioned_direction: mesh has no vertices");
@@ -948,6 +960,14 @@ HsDirectionResult hs_preconditioned_direction(
         throw std::runtime_error(
             "hs_preconditioned_direction: theta must be non-negative");
     }
+    if (constraints.pin_mask != nullptr &&
+        static_cast<int>(constraints.pin_mask->size()) != nv) {
+        throw std::runtime_error(
+            "hs_preconditioned_direction: pin mask size must match vertex count");
+    }
+
+    Eigen::MatrixXd constrained_gradient = gradient;
+    apply_hs_constraints(constrained_gradient, constraints);
 
     const HsOperators hs = build_hs_operators(mesh);
     const FaceGeom g = compute_face_geom(mesh);
@@ -978,17 +998,18 @@ HsDirectionResult hs_preconditioned_direction(
     out.max_gmres_error = 0.0;
     out.used_identity_fallback = false;
 
-    Eigen::VectorXd g_flat = flatten_vertex_field(gradient);
+    Eigen::VectorXd g_flat = flatten_vertex_field(constrained_gradient);
     sandwich.project(g_flat);
     const Eigen::VectorXd rhs_left = sandwich.solve(g_flat);
     Eigen::VectorXd d_flat = gmres.solve(rhs_left);
     sandwich.project(d_flat);
     out.direction = unflatten_vertex_field(d_flat, nv);
+    apply_hs_constraints(out.direction, constraints);
     out.max_gmres_iterations = static_cast<int>(gmres.iterations());
     out.max_gmres_error = gmres.error();
 
     auto compute_g_dot_dir = [&]() {
-        return (gradient.array() * out.direction.array()).sum();
+        return (constrained_gradient.array() * out.direction.array()).sum();
     };
 
     out.g_dot_dir = out.direction.allFinite()
@@ -1014,11 +1035,12 @@ HsDirectionResult hs_preconditioned_direction(
         out.max_gmres_error = 0.0;
         out.used_identity_fallback = true;
 
-        Eigen::VectorXd rhs_flat = flatten_vertex_field(gradient);
+        Eigen::VectorXd rhs_flat = flatten_vertex_field(constrained_gradient);
         sandwich.project(rhs_flat);
         Eigen::VectorXd fallback_flat = identity_gmres.solve(rhs_flat);
         sandwich.project(fallback_flat);
         out.direction = unflatten_vertex_field(fallback_flat, nv);
+        apply_hs_constraints(out.direction, constraints);
         out.max_gmres_iterations = static_cast<int>(identity_gmres.iterations());
         out.max_gmres_error = identity_gmres.error();
 

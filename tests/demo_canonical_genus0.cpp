@@ -10,6 +10,7 @@
 
 #include "BCT.h"
 #include "BVH.h"
+#include "Constraints.h"
 #include "FaceGeom.h"
 #include "HsPreconditioner.h"
 #include "MeshData.h"
@@ -161,6 +162,10 @@ int main(int argc, char **argv) {
 
     m.save_obj(frame_path(out_dir, 0));
 
+    rsh::HsConstraints hs_constraints;
+    hs_constraints.pin_barycenter = true;
+    const Eigen::RowVector3d initial_centroid = m.V.colwise().mean();
+
     double tau = initial_tau;
     bool stopped_by_tol = false;
     bool stopped_by_armijo = false;
@@ -177,7 +182,8 @@ int main(int argc, char **argv) {
         remove_scale_mode(m.V, G);
         const double gnorm = G.norm();
 
-        rsh::HsDirectionResult hs = rsh::hs_preconditioned_direction(m, G, hs_params);
+        rsh::HsDirectionResult hs =
+            rsh::hs_preconditioned_direction(m, G, hs_params, hs_constraints);
         Eigen::MatrixXd dir = hs.direction;
         project_scale_direction(m.V, dir);
         const double g_dot_dir = (G.array() * dir.array()).sum();
@@ -236,6 +242,8 @@ int main(int argc, char **argv) {
     }
 
     const Eigen::Vector3d extF = bbox_extents(m);
+    const double barycenter_drift =
+        (m.V.colwise().mean() - initial_centroid).norm();
     const double mean_extent = extF.mean();
     const double roundness_spread =
         (extF.maxCoeff() - extF.minCoeff()) / std::max(mean_extent, 1e-16);
@@ -246,7 +254,8 @@ int main(int argc, char **argv) {
         final_energy = rsh::tpe_energy_bh(g, bvh, bp, alpha);
         Eigen::MatrixXd G = rsh::tpe_gradient_bh(m, g, bvh, bp, alpha);
         remove_scale_mode(m.V, G);
-        rsh::HsDirectionResult hs = rsh::hs_preconditioned_direction(m, G, hs_params);
+        rsh::HsDirectionResult hs =
+            rsh::hs_preconditioned_direction(m, G, hs_params, hs_constraints);
         Eigen::MatrixXd dir = hs.direction;
         project_scale_direction(m.V, dir);
         const double g_dot_dir = (G.array() * dir.array()).sum();
@@ -260,6 +269,7 @@ int main(int argc, char **argv) {
               << "\nfinal bbox extents: (" << extF(0) << ", "
               << extF(1) << ", " << extF(2) << ")"
               << "\nroundness spread: " << roundness_spread
+              << "\nbarycenter drift: " << barycenter_drift
               << "\nstopped by tolerance: " << (stopped_by_tol ? "yes" : "no")
               << "\nstopped by Armijo: " << (stopped_by_armijo ? "yes" : "no")
               << "\nFrames: " << out_dir << "/frame_*.obj"

@@ -6,6 +6,8 @@
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 
+#include <vector>
+
 namespace rsh {
 
 struct HsOperators {
@@ -36,12 +38,18 @@ struct HsDirectionResult {
     bool used_identity_fallback = false;
 };
 
+struct HsConstraints {
+    bool pin_barycenter = false;
+    const std::vector<bool> *pin_mask = nullptr;
+};
+
 HsOperators build_hs_operators(const MeshData &mesh);
 
 HsDirectionResult hs_preconditioned_direction(
     const MeshData &mesh,
     const Eigen::MatrixXd &gradient,
-    const HsPreconditionerParams &params = HsPreconditionerParams());
+    const HsPreconditionerParams &params = HsPreconditionerParams(),
+    const HsConstraints &constraints = HsConstraints());
 
 // Validation/helper API: apply the matrix-free H^s operator A = B + B_0 to a
 // per-vertex 3-vector field. Production descent should normally call

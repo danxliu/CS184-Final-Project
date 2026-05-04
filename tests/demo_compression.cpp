@@ -1,5 +1,6 @@
 #include "BCT.h"
 #include "BVH.h"
+#include "Constraints.h"
 #include "FaceGeom.h"
 #include "HsPreconditioner.h"
 #include "MeshData.h"
@@ -53,6 +54,7 @@ void remove_stale_frames(const std::string &dir) {
 
 struct CliOptions {
     double initial_tau = 1.0;
+    int num_frames = 40;
     std::vector<std::string> mesh_paths;
 };
 
@@ -65,10 +67,17 @@ CliOptions parse_cli(int argc, char **argv) {
                 throw std::runtime_error(arg + " requires a numeric value");
             }
             out.initial_tau = std::stod(argv[++i]);
+        } else if (arg == "--frames") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(arg + " requires an integer value");
+            }
+            out.num_frames = std::stoi(argv[++i]);
         } else if (arg.rfind("--initial-tau=", 0) == 0) {
             out.initial_tau = std::stod(arg.substr(std::string("--initial-tau=").size()));
         } else if (arg.rfind("--tau0=", 0) == 0) {
             out.initial_tau = std::stod(arg.substr(std::string("--tau0=").size()));
+        } else if (arg.rfind("--frames=", 0) == 0) {
+            out.num_frames = std::stoi(arg.substr(std::string("--frames=").size()));
         } else {
             out.mesh_paths.push_back(arg);
         }
@@ -76,6 +85,9 @@ CliOptions parse_cli(int argc, char **argv) {
 
     if (!std::isfinite(out.initial_tau) || out.initial_tau <= 0.0) {
         throw std::runtime_error("--initial-tau must be positive and finite");
+    }
+    if (out.num_frames <= 0) {
+        throw std::runtime_error("--frames must be positive");
     }
     if (!out.mesh_paths.empty() && out.mesh_paths.size() != 2) {
         throw std::runtime_error(
@@ -157,6 +169,7 @@ int main(int argc, char **argv) {
     double epsilon = 0.1;
     std::vector<bool> is_left_handle(m_ref.n_vertices(), false);
     std::vector<bool> is_right_handle(m_ref.n_vertices(), false);
+    std::vector<bool> handle_pin_mask(m_ref.n_vertices(), false);
     int num_left_handles = 0;
     int num_right_handles = 0;
 
@@ -164,9 +177,11 @@ int main(int argc, char **argv) {
         double x = m_ref.V(i, 0);
         if (x <= left_min_x + epsilon) {
             is_left_handle[i] = true;
+            handle_pin_mask[i] = true;
             num_left_handles++;
         } else if (x >= right_max_x - epsilon) {
             is_right_handle[i] = true;
+            handle_pin_mask[i] = true;
             num_right_handles++;
         }
     }
@@ -174,7 +189,7 @@ int main(int argc, char **argv) {
     std::cout << "Left handles: " << num_left_handles << ", Right handles: " << num_right_handles << "\n";
 
     // Simulation parameters
-    int num_frames = 40;
+    const int num_frames = cli.num_frames;
     double dx_per_frame = 0.025; // Move each side inwards by 0.025 per frame
     
     // Optimization parameters
@@ -196,6 +211,8 @@ int main(int argc, char **argv) {
     hs_params.s = 1.5;
     hs_params.sigma = 1.0;
     hs_params.mass_weight = 1.0;
+    rsh::HsConstraints hs_constraints;
+    hs_constraints.pin_mask = &handle_pin_mask;
 
     const std::string out_dir = "out/compress_sequence";
     std::filesystem::create_directories(out_dir);
@@ -210,7 +227,8 @@ int main(int argc, char **argv) {
     frame_csv << "frame,status,initial_energy,final_energy,accepted_steps,safeguard_fallbacks,total_backtracks\n";
 
     std::cout << "Starting compression simulation...\n"
-              << "Initial Armijo trial tau: " << cli.initial_tau << "\n";
+              << "Initial Armijo trial tau: " << cli.initial_tau << "\n"
+              << "Frames: " << num_frames << "\n";
 
     for (int frame = 1; frame <= num_frames; ++frame) {
         std::cout << "\n--- Frame " << frame << " ---\n";
@@ -252,12 +270,7 @@ int main(int argc, char **argv) {
             }
             frame_final_energy = E_total;
 
-            // Zero out gradient on handles
-            for (int i = 0; i < m_curr.n_vertices(); ++i) {
-                if (is_left_handle[i] || is_right_handle[i]) {
-                    G_total.row(i).setZero();
-                }
-            }
+            rsh::apply_pin_mask(G_total, handle_pin_mask);
 
             double gnorm = G_total.norm();
             if (it == 0) {
@@ -277,17 +290,12 @@ int main(int argc, char **argv) {
             }
 
             // Direction
-            rsh::HsDirectionResult hs_res = rsh::hs_preconditioned_direction(m_curr, G_total, hs_params);
+            rsh::HsDirectionResult hs_res =
+                rsh::hs_preconditioned_direction(
+                    m_curr, G_total, hs_params, hs_constraints);
             Eigen::MatrixXd dir = hs_res.direction;
             if (hs_res.used_identity_fallback) {
                 ++frame_fallbacks;
-            }
-
-            // Zero out direction on handles
-            for (int i = 0; i < m_curr.n_vertices(); ++i) {
-                if (is_left_handle[i] || is_right_handle[i]) {
-                    dir.row(i).setZero();
-                }
             }
 
             // Backtracking

@@ -14,6 +14,7 @@
 
 #include "BCT.h"
 #include "BVH.h"
+#include "Constraints.h"
 #include "FaceGeom.h"
 #include "HsPreconditioner.h"
 #include "MeshData.h"
@@ -147,6 +148,9 @@ int main(int argc, char **argv) {
     m.save_obj(frame_path(out_dir, 0));
 
     const rsh::HsPreconditionerParams hs_params{hs_s, hs_sigma, hs_mass_weight};
+    rsh::HsConstraints hs_constraints;
+    hs_constraints.pin_barycenter = true;
+    const Eigen::RowVector3d initial_centroid = m.V.colwise().mean();
     double tau = initial_tau;
     double E_stall_ref = std::numeric_limits<double>::infinity();
     int stall_ref_iter = -stall_window;
@@ -168,7 +172,8 @@ int main(int argc, char **argv) {
             break;
         }
 
-        const rsh::HsDirectionResult hs = rsh::hs_preconditioned_direction(m, G, hs_params);
+        const rsh::HsDirectionResult hs =
+            rsh::hs_preconditioned_direction(m, G, hs_params, hs_constraints);
         tau = std::min(tau * 2.0, initial_tau);
         int n_bt = 0;
         MeshData m_try = m;
@@ -213,8 +218,11 @@ int main(int argc, char **argv) {
     }
 
     const Eigen::Vector3d extF = bbox_extents(m);
+    const double barycenter_drift =
+        (m.V.colwise().mean() - initial_centroid).norm();
     std::cout << "\nfinal bbox extents:   (" << extF(0) << ", "
               << extF(1) << ", " << extF(2) << ")\n"
+              << "barycenter drift: " << barycenter_drift << "\n"
               << "Frames: " << out_dir << "/frame_*.obj\n"
               << "Energy log: " << out_dir << "/energy.csv\n";
     return 0;
