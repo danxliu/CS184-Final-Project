@@ -134,6 +134,12 @@ target_link_libraries(demo_canonical_genus0 PRIVATE rsh_core)
 add_executable(demo_gallery_genus0 tests/demo_gallery_genus0.cpp)
 target_link_libraries(demo_gallery_genus0 PRIVATE rsh_core)
 
+add_executable(diagnose_bh_cancellation tools/diagnose_bh_cancellation.cpp)
+target_link_libraries(diagnose_bh_cancellation PRIVATE rsh_core)
+
+add_executable(diagnose_bh_leaf tools/diagnose_bh_leaf.cpp)
+target_link_libraries(diagnose_bh_leaf PRIVATE rsh_core)
+
 # add_executable(demo_interpolation tests/demo_interpolation.cpp)
 # target_link_libraries(demo_interpolation PRIVATE rsh_core)
 

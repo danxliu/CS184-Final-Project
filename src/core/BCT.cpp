@@ -6,10 +6,26 @@ namespace rsh {
 
 namespace {
 
+// AABB squared-distance: 0 if boxes overlap, otherwise the squared distance
+// between the closest pair of points. For nearby clusters whose AABBs overlap
+// (e.g. opposite sides of a torus handle pinch), this is zero — forcing the
+// pair into recursion / near-field exact computation. Repulsor uses the same
+// formulation (GJK.hpp:1182).
+double aabb_squared_distance(const BVHNode &U, const BVHNode &V) {
+    double d2 = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        const double over = U.bmin[k] - V.bmax[k];   // > 0 iff U_min > V_max
+        const double under = V.bmin[k] - U.bmax[k];  // > 0 iff V_min > U_max
+        const double gap = std::max({0.0, over, under});
+        d2 += gap * gap;
+    }
+    return d2;
+}
+
 bool mac_admissible(const BVHNode &U, const BVHNode &V, double theta) {
-    const double dist = (V.centroid - U.centroid).norm();
-    const double max_r = std::max(U.radius, V.radius);
-    return dist > 0.0 && max_r < theta * dist;
+    const double d2 = aabb_squared_distance(U, V);
+    const double max_r2 = std::max(U.radius * U.radius, V.radius * V.radius);
+    return d2 > 0.0 && max_r2 < (theta * theta) * d2;
 }
 
 void visit(const BVH &bvh, int u, int v, double theta, BlockPairs &out) {

@@ -151,6 +151,7 @@ void make_leaf(BVHNode &node, const FaceGeom &g,
     double area_sum = 0.0;
     Eigen::Vector3d c_num = Eigen::Vector3d::Zero();
     Eigen::Vector3d n_sum = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d ps = Eigen::Matrix3d::Zero();
     for (int i = start; i < end; ++i) {
         const int t = face_indices[i];
         const double a = g.A(t);
@@ -159,10 +160,12 @@ void make_leaf(BVHNode &node, const FaceGeom &g,
         area_sum += a;
         c_num += a * c;
         n_sum += a * n;
+        ps += a * (n * n.transpose());
     }
     node.area = area_sum;
     node.centroid = c_num / area_sum;
     node.normal_sum = n_sum;
+    node.projector_sum = ps;
 
     double r = 0.0;
     for (int i = start; i < end; ++i) {
@@ -267,6 +270,7 @@ int build_recursive(BVH &bvh, const std::vector<FaceBox> &fa,
     node.area = L.area + R.area;
     node.centroid = (L.area * L.centroid + R.area * R.centroid) / node.area;
     node.normal_sum = L.normal_sum + R.normal_sum;
+    node.projector_sum = L.projector_sum + R.projector_sum;
     // Triangle inequality upper bound: any face t in L-subtree is within
     // r_L of c_L, and c_L is ||c_L - c_U|| from c_U, so ||c_t - c_U|| <=
     // ||c_L - c_U|| + r_L. Same for R. Take the max.
@@ -285,6 +289,7 @@ void refresh_aggregates(BVH &bvh, int u, const FaceGeom &g) {
         double area_sum = 0.0;
         Eigen::Vector3d c_num = Eigen::Vector3d::Zero();
         Eigen::Vector3d n_sum = Eigen::Vector3d::Zero();
+        Eigen::Matrix3d ps = Eigen::Matrix3d::Zero();
         for (int i = node.face_start; i < node.face_end; ++i) {
             const int t = bvh.face_indices[i];
             const double a = g.A(t);
@@ -293,10 +298,12 @@ void refresh_aggregates(BVH &bvh, int u, const FaceGeom &g) {
             area_sum += a;
             c_num += a * c;
             n_sum += a * n;
+            ps += a * (n * n.transpose());
         }
         node.area = area_sum;
         node.centroid = c_num / area_sum;
         node.normal_sum = n_sum;
+        node.projector_sum = ps;
         double r = 0.0;
         for (int i = node.face_start; i < node.face_end; ++i) {
             const int t = bvh.face_indices[i];
@@ -312,6 +319,7 @@ void refresh_aggregates(BVH &bvh, int u, const FaceGeom &g) {
         node.area = L.area + R.area;
         node.centroid = (L.area * L.centroid + R.area * R.centroid) / node.area;
         node.normal_sum = L.normal_sum + R.normal_sum;
+        node.projector_sum = L.projector_sum + R.projector_sum;
         node.radius = std::max(
             (L.centroid - node.centroid).norm() + L.radius,
             (R.centroid - node.centroid).norm() + R.radius);

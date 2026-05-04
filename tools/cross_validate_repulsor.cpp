@@ -82,6 +82,12 @@ struct FinalMeshParityRow {
     double tpe_ours = 0.0;
     double tpe_repulsor = 0.0;
     double ratio_repulsor_over_ours = 0.0;
+    double tpe_ours_bh_t05 = 0.0;
+    double tpe_repulsor_bct0_t05 = 0.0;
+    double tpe_ours_bh_t025 = 0.0;
+    double tpe_repulsor_bct0_t025 = 0.0;
+    double tpe_ours_bh_t01 = 0.0;
+    double tpe_repulsor_bct0_t01 = 0.0;
 };
 
 std::vector<double> row_major_vertices(const rsh::MeshData &mesh) {
@@ -228,12 +234,24 @@ FinalMeshParityRow evaluate_final_mesh_parity(
     row.n_f = mesh.n_faces();
     row.tpe_ours = rsh::tpe_energy_brute(mesh, alpha);
 
-    RepulsorMesh rep_mesh = make_repulsor_mesh(mesh, 0.0, max_leaf_size);
-    Repulsor::TangentPointEnergy_AllPairs<RepulsorMesh> tpe_allpairs(
-        alpha, 2.0 * alpha);
-    row.tpe_repulsor = tpe_allpairs.Value(rep_mesh);
+    {
+        RepulsorMesh rep_mesh = make_repulsor_mesh(mesh, 0.0, max_leaf_size);
+        Repulsor::TangentPointEnergy_AllPairs<RepulsorMesh> tpe_allpairs(
+            alpha, 2.0 * alpha);
+        row.tpe_repulsor = tpe_allpairs.Value(rep_mesh);
+    }
     row.ratio_repulsor_over_ours =
         safe_ratio(row.tpe_repulsor, row.tpe_ours);
+
+    auto bh_pair = [&](double theta, double &ours_out, double &rep_out) {
+        ours_out = rsh::tpe_energy_bh(mesh, alpha, theta);
+        RepulsorMesh rep_mesh = make_repulsor_mesh(mesh, theta, max_leaf_size);
+        Repulsor::TangentPointEnergy0<RepulsorMesh> tpe_bct0(alpha);
+        rep_out = tpe_bct0.Value(rep_mesh);
+    };
+    bh_pair(0.5,  row.tpe_ours_bh_t05,  row.tpe_repulsor_bct0_t05);
+    bh_pair(0.25, row.tpe_ours_bh_t025, row.tpe_repulsor_bct0_t025);
+    bh_pair(0.1,  row.tpe_ours_bh_t01,  row.tpe_repulsor_bct0_t01);
     return row;
 }
 
@@ -367,9 +385,15 @@ void write_final_mesh_parity_row(std::ostream &out,
         << ",mesh=" << row.mesh
         << ",n_v=" << row.n_v
         << ",n_f=" << row.n_f
-        << ",tpe_ours=" << row.tpe_ours
-        << ",tpe_repulsor=" << row.tpe_repulsor
-        << ",ratio=" << row.ratio_repulsor_over_ours
+        << ",tpe_ours_brute=" << row.tpe_ours
+        << ",tpe_repulsor_brute=" << row.tpe_repulsor
+        << ",ratio_brute=" << row.ratio_repulsor_over_ours
+        << ",tpe_ours_bh_t05=" << row.tpe_ours_bh_t05
+        << ",tpe_repulsor_bct0_t05=" << row.tpe_repulsor_bct0_t05
+        << ",tpe_ours_bh_t025=" << row.tpe_ours_bh_t025
+        << ",tpe_repulsor_bct0_t025=" << row.tpe_repulsor_bct0_t025
+        << ",tpe_ours_bh_t01=" << row.tpe_ours_bh_t01
+        << ",tpe_repulsor_bct0_t01=" << row.tpe_repulsor_bct0_t01
         << '\n';
 }
 

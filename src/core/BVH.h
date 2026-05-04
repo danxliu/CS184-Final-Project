@@ -18,6 +18,16 @@ namespace rsh {
 //   normal_sum      — n_U = sum_{t} a_t n_t, area-weighted but NOT unit. The
 //                     magnitude |n_U| / a_U is in [0, 1] and encodes how
 //                     coherently oriented the cluster is.
+//                     Used by the H^s low-order operator (B_0). Avoid for
+//                     TPE-side multipole — see projector_sum below.
+//   projector_sum   — PS_U = sum_{t} a_t * (n_t * n_t^T), 3x3 symmetric PSD.
+//                     The covariance of the cluster's face normals (weighted
+//                     by area). Repulsor's BCT0 uses the same form. Replaces
+//                     normal_sum for the TPE multipole kernel because the
+//                     Jensen gap of |E[N]·d|^α is large at α=6 when normals
+//                     in the cluster disagree (e.g. opposing patches across
+//                     a torus handle pinch); ((1/a) d^T PS_U d)^(α/2) is a
+//                     much tighter approximation.
 //   radius          — r_U = max_{t in subtree} ||c_t - c_U||. Used by the
 //                     MAC in Phase 1.5. Computed exactly at leaves; upper-
 //                     bounded via the triangle inequality at internal nodes
@@ -35,6 +45,7 @@ struct BVHNode {
     double area = 0.0;
     Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
     Eigen::Vector3d normal_sum = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d projector_sum = Eigen::Matrix3d::Zero();
     double radius = 0.0;
 
     int left = -1;   // child indices into BVH::nodes; -1 if leaf

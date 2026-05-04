@@ -338,11 +338,36 @@ std::vector<std::array<Vec3, 3>> build_opposite_edges(const MeshData &mesh) {
     return E;
 }
 
+// Multipole kernel for an ordered admissible cluster pair (U, V):
+//
+//   K(U,V) = a_V * a_U^(1 - α/2) * q^(α/2) / r^(2α)
+//
+// where q = d^T PS_U d, d = c_U - c_V, r = |d|, PS_U = Σ_{t∈U} a_t N_t N_t^T.
+// The BCT emits both (U,V) and (V,U) directionally so the symmetrized total
+// is K(U,V) + K(V,U), matching Repulsor's TP0 FF kernel
+// (TP0_Kernel_FF.hpp::Compute, line ~204):
+//
+//   E = (|P_x · v|^q + |P_y · v|^q) / |y - x|^p
+//
+// At a single-face limit (U = {t1}, V = {t2}), this reduces exactly to the
+// brute kernel a_t1 a_t2 |N_t1 · d|^α / r^(2α).
+//
+// Why projector covariance instead of mean normal: for α > 1, by Jensen's
+// inequality |E[N]·d|^α ≤ E[|N·d|^α], with the gap growing fast in α and in
+// normal-direction spread inside the cluster. The mean-normal aggregate
+// (n_U_mean = Σ a_t N_t / a_U) loses both magnitude and sign information when
+// the cluster mixes opposing patches (e.g. across a torus handle pinch),
+// systematically underestimating the energy. The projector-covariance
+// aggregate ((d^T PS_U d / a_U)^(α/2)) is also a Jensen-style underestimate
+// of E[|N·d|^α], but a much tighter one because the inner (·)² absorbs the
+// sign cancellation before raising to α/2.
 double admissible_energy(const FaceGeom &g,
                          const BVH &bvh,
                          const BlockPairs &bp,
                          double alpha) {
     const int n_pairs = static_cast<int>(bp.admissible.size());
+    const double half_alpha = 0.5 * alpha;
+    const double one_minus_half_alpha = 1.0 - half_alpha;
     std::vector<double> partial(static_cast<size_t>(omp_thread_count()), 0.0);
 #pragma omp parallel for schedule(static)
     for (int pair_idx = 0; pair_idx < n_pairs; ++pair_idx) {
@@ -351,12 +376,14 @@ double admissible_energy(const FaceGeom &g,
         const BVHNode &V = bvh.nodes[cp.v];
         const Vec3 d = U.centroid - V.centroid;
         const double r2 = d.squaredNorm();
-        const Vec3 nU_mean = U.normal_sum / U.area;
-        const double s = nU_mean.dot(d);
-        const double num = std::pow(std::abs(s), alpha);
+        if (r2 == 0.0 || U.area <= 0.0) continue;
+        const double q = d.dot(U.projector_sum * d);  // = Σ_{t∈U} a_t (N_t·d)^2
+        if (q <= 0.0) continue;
+        const double num = std::pow(q, half_alpha);
         const double den = std::pow(r2, alpha);
+        const double aU_factor = std::pow(U.area, one_minus_half_alpha);
         partial[static_cast<size_t>(omp_thread_index())] +=
-            U.area * V.area * num / den;
+            V.area * aU_factor * num / den;
     }
     double phi = 0.0;
     for (double p : partial) phi += p;
@@ -448,47 +475,62 @@ void accumulate_admissible_gradient(const MeshData &mesh,
             tls_dc[static_cast<size_t>(omp_thread_index())];
         Eigen::MatrixXd &dE_dn_face =
             tls_dn[static_cast<size_t>(omp_thread_index())];
+        // K(U,V) = a_V * a_U^(1 - α/2) * q^(α/2) / r^(2α)
+        //   q = d^T PS_U d,  d = c_U - c_V,  PS_U = Σ_{t∈U} a_t N_t N_t^T
+        // See admissible_energy() above for the derivation; the gradient
+        // formulas below collapse to the brute kernel's gradient at the
+        // single-face limit (verified algebraically).
         const BVHNode &U = bvh.nodes[cp.u];
         const BVHNode &V = bvh.nodes[cp.v];
         const double aU = U.area;
         const double aV = V.area;
         const Vec3 cU = U.centroid;
         const Vec3 cV = V.centroid;
-        const Vec3 SU = U.normal_sum;
-        const Vec3 mU = SU / aU;
         const Vec3 d = cU - cV;
         const double r2 = d.squaredNorm();
-        if (r2 == 0.0) continue;
+        if (r2 == 0.0 || aU <= 0.0) continue;
 
-        const double s = mU.dot(d);
-        const double s2 = s * s;
+        const Vec3 PSd = U.projector_sum * d;        // 3-vec
+        const double q = d.dot(PSd);                 // = Σ a_t (N_t·d)^2
+        if (q <= 0.0) continue;
+
+        const double half_alpha = 0.5 * alpha;
+        const double q_half_alpha = std::pow(q, half_alpha);
         const double inv_r2alpha = std::pow(r2, -alpha);
-        const double psi = std::pow(s2, alpha * 0.5);
-        const double s_signed_pow = s * std::pow(s2, (alpha - 2.0) * 0.5);
+        const double aU_pow = std::pow(aU, 1.0 - half_alpha);
+        const double K = aV * aU_pow * q_half_alpha * inv_r2alpha;
 
-        const double dK_daU = (1.0 - alpha) * aV * psi * inv_r2alpha;
-        const double dK_daV = aU * psi * inv_r2alpha;
-        const Vec3 dK_dSU = aV * alpha * s_signed_pow * inv_r2alpha * d;
+        // Cluster-level partials.
+        // dK/da_V = K / a_V
+        // dK/da_U = (1 - α/2) K / a_U
+        // dK/dc_U via q:  K · [α PS_U d / q − 2α d / r²]
+        // dK/dc_V = −dK/dc_U
+        const double dK_daU_via_aU = (1.0 - half_alpha) * K / aU;
+        const double dK_daV_via_aV = K / aV;
         const Vec3 dK_dcU =
-            aU * aV * alpha * inv_r2alpha *
-            (s_signed_pow * mU - 2.0 * psi * d / r2);
+            K * (alpha / q * PSd - (2.0 * alpha / r2) * d);
         const Vec3 dK_dcV = -dK_dcU;
+        const double K_alpha_over_q = K * alpha / q;
+        const double K_alpha_over_2q = 0.5 * K_alpha_over_q;
 
         for (int i = U.face_start; i < U.face_end; ++i) {
             const int t = bvh.face_indices[i];
             const double a_t = g.A(t);
             const Vec3 c_t = g.C.row(t);
             const Vec3 n_t = g.N.row(t);
+            const double Ndotd = n_t.dot(d);
             dE_da_face(t) +=
-                dK_daU + dK_dSU.dot(n_t) + dK_dcU.dot(c_t - cU) / aU;
+                dK_daU_via_aU
+                + dK_dcU.dot(c_t - cU) / aU
+                + K_alpha_over_2q * (Ndotd * Ndotd);
             dE_dc_face.row(t) += (a_t / aU) * dK_dcU.transpose();
-            dE_dn_face.row(t) += a_t * dK_dSU.transpose();
+            dE_dn_face.row(t) += (K_alpha_over_q * a_t * Ndotd) * d.transpose();
         }
         for (int j = V.face_start; j < V.face_end; ++j) {
             const int t = bvh.face_indices[j];
             const double a_t = g.A(t);
             const Vec3 c_t = g.C.row(t);
-            dE_da_face(t) += dK_daV + dK_dcV.dot(c_t - cV) / aV;
+            dE_da_face(t) += dK_daV_via_aV + dK_dcV.dot(c_t - cV) / aV;
             dE_dc_face.row(t) += (a_t / aV) * dK_dcV.transpose();
         }
     }
