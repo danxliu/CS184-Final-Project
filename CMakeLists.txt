@@ -39,6 +39,7 @@ set(RSH_CORE_SOURCES
     src/core/TrustRegionSolver.cpp
     src/core/ExtrapolationSolver.cpp
     src/core/Constraints.cpp
+    src/core/Remesh.cpp
     src/core/TPE.cpp
     src/core/BVH.cpp
     src/core/BCT.cpp
