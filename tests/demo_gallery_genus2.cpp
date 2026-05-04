@@ -28,14 +28,23 @@
 #include <omp.h>
 #endif
 
+#ifndef RSH_GALLERY_DEFAULT_GENUS
+#define RSH_GALLERY_DEFAULT_GENUS 2
+#endif
+
+#define RSH_STRINGIFY_IMPL(x) #x
+#define RSH_STRINGIFY(x) RSH_STRINGIFY_IMPL(x)
+
 namespace {
 
 struct CliOptions {
-    int genus = 2;
+    int genus = RSH_GALLERY_DEFAULT_GENUS;
     int torus_nu = 18;
     int torus_nv = 10;
     int max_iters = 200;
-    std::string out_dir = "out/gallery_genus2";
+    std::string out_dir =
+        std::string("out/gallery_genus") +
+        std::to_string(RSH_GALLERY_DEFAULT_GENUS);
     bool dump_every_iter = true;
 };
 
@@ -329,7 +338,8 @@ int main(int argc, char **argv) {
         const double total_seconds =
             std::chrono::duration<double>(total_t1 - total_t0).count();
 
-        std::cout << "demo_gallery_genus2"
+        std::cout << "demo_gallery_genus"
+                  << RSH_STRINGIFY(RSH_GALLERY_DEFAULT_GENUS)
                   << ",genus=" << opts.genus
                   << ",torus_nu=" << opts.torus_nu
                   << ",torus_nv=" << opts.torus_nv
@@ -369,7 +379,9 @@ int main(int argc, char **argv) {
             run_repulsor_parity_if_available(argv[0], final_mesh_path);
         return parity_status;
     } catch (const std::exception &e) {
-        std::cerr << "demo_gallery_genus2: " << e.what() << "\n";
+        std::cerr << "demo_gallery_genus"
+                  << RSH_STRINGIFY(RSH_GALLERY_DEFAULT_GENUS)
+                  << ": " << e.what() << "\n";
         return 1;
     }
 }

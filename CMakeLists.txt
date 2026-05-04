@@ -137,8 +137,25 @@ target_link_libraries(demo_gallery_genus0 PRIVATE rsh_core)
 add_executable(demo_gallery_genus1 tests/demo_gallery_genus1.cpp)
 target_link_libraries(demo_gallery_genus1 PRIVATE rsh_core)
 
-add_executable(demo_gallery_genus2 tests/demo_gallery_genus2.cpp)
-target_link_libraries(demo_gallery_genus2 PRIVATE rsh_core)
+function(add_connected_gallery_target GENUS)
+    set(TARGET_NAME "demo_gallery_genus${GENUS}")
+    add_executable(${TARGET_NAME} tests/demo_gallery_genus2.cpp)
+    target_link_libraries(${TARGET_NAME} PRIVATE rsh_core)
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        RSH_GALLERY_DEFAULT_GENUS=${GENUS})
+endfunction()
+
+add_connected_gallery_target(2)
+add_connected_gallery_target(3)
+add_connected_gallery_target(4)
+add_connected_gallery_target(5)
+
+add_custom_target(gallery_genus0 DEPENDS demo_gallery_genus0)
+add_custom_target(gallery_genus1 DEPENDS demo_gallery_genus1)
+add_custom_target(gallery_genus2 DEPENDS demo_gallery_genus2)
+add_custom_target(gallery_genus3 DEPENDS demo_gallery_genus3)
+add_custom_target(gallery_genus4 DEPENDS demo_gallery_genus4)
+add_custom_target(gallery_genus5 DEPENDS demo_gallery_genus5)
 
 add_executable(diagnose_bh_cancellation tools/diagnose_bh_cancellation.cpp)
 target_link_libraries(diagnose_bh_cancellation PRIVATE rsh_core)

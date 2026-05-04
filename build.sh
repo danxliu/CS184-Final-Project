@@ -39,6 +39,8 @@ fi
 
 if [ ! -f build/Makefile ] && [ ! -f build/build.ninja ]; then
     cmake -S . -B build -DRSH_ENABLE_VIEWER=ON
+elif [ CMakeLists.txt -nt build/CMakeCache.txt ]; then
+    cmake -S . -B build -DRSH_ENABLE_VIEWER=ON
 fi
 
 if [ $# -eq 0 ]; then
