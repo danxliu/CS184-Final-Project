@@ -64,6 +64,23 @@ void register_mesh(const rsh::MeshData &mesh,
               << " faces=" << mesh.n_faces() << "\n";
 }
 
+// Static obstacle mesh dumped alongside the frames (e.g. capsule tube
+// from demo_phase3_ball_tube). Registered once with a contrasting color.
+void register_obstacle(const std::filesystem::path &obstacle_path) {
+    if (!std::filesystem::exists(obstacle_path)) return;
+    rsh::MeshData mesh = rsh::MeshData::load_obj(obstacle_path.string());
+    auto *ps_mesh = polyscope::registerSurfaceMesh(
+        "obstacle", vertex_positions(mesh), face_indices(mesh));
+    ps_mesh->setSmoothShade(true);
+    ps_mesh->setEdgeWidth(0.0);
+    ps_mesh->setSurfaceColor(glm::vec3(0.85f, 0.45f, 0.40f));
+    ps_mesh->setTransparency(0.55f);
+    ps_mesh->setMaterial("flat");
+    std::cout << "loaded obstacle " << obstacle_path.filename().string()
+              << "  vertices=" << mesh.n_vertices()
+              << " faces=" << mesh.n_faces() << "\n";
+}
+
 bool is_frame_obj(const std::filesystem::directory_entry &entry) {
     if (!entry.is_regular_file()) return false;
     const std::string name = entry.path().filename().string();
@@ -134,6 +151,7 @@ int main(int argc, char **argv) {
                                          input.string());
             }
             frames = load_frames(paths);
+            register_obstacle(input / "obstacle.obj");
 
             auto show_frame = [&](int frame_idx) {
                 active_frame = std::clamp(frame_idx,

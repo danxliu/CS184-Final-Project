@@ -133,6 +133,59 @@ double min_signed_distance(const MeshData &mesh, const rsh::Obstacle &obs) {
     return m;
 }
 
+// Dump a coarse capped-cylinder approximation of the capsule for
+// visualization (polyscope_viewer auto-loads <dir>/obstacle.obj).
+// Caps are flat disks rather than hemispheres — visually adequate for the
+// demo since the ball flies past the cylinder side, not through the ends.
+void write_capsule_visual_obj(const Eigen::Vector3d &p0,
+                              const Eigen::Vector3d &p1,
+                              double r,
+                              int n_circ,
+                              const std::string &path) {
+    const Eigen::Vector3d axis = (p1 - p0).normalized();
+    const Eigen::Vector3d e_alt =
+        std::abs(axis.x()) > 0.9 ? Eigen::Vector3d::UnitY()
+                                 : Eigen::Vector3d::UnitX();
+    const Eigen::Vector3d u = (e_alt - axis * e_alt.dot(axis)).normalized();
+    const Eigen::Vector3d v = axis.cross(u);
+
+    std::ofstream out(path);
+    out << std::setprecision(8);
+    // Vertex layout:
+    //   1                    : end-cap center at p0
+    //   2 .. n_circ + 1      : ring at p0
+    //   n_circ + 2 .. 2 n_circ + 1: ring at p1
+    //   2 n_circ + 2         : end-cap center at p1
+    out << "v " << p0.x() << " " << p0.y() << " " << p0.z() << "\n";
+    for (int side = 0; side < 2; ++side) {
+        const Eigen::Vector3d base = (side == 0) ? p0 : p1;
+        for (int i = 0; i < n_circ; ++i) {
+            const double t = 2.0 * M_PI * i / n_circ;
+            const Eigen::Vector3d p =
+                base + r * (std::cos(t) * u + std::sin(t) * v);
+            out << "v " << p.x() << " " << p.y() << " " << p.z() << "\n";
+        }
+    }
+    out << "v " << p1.x() << " " << p1.y() << " " << p1.z() << "\n";
+
+    const int center0 = 1;
+    const int ring0 = 2;                  // first vertex of ring0 (1-based)
+    const int ring1 = ring0 + n_circ;
+    const int center1 = ring1 + n_circ;
+    for (int i = 0; i < n_circ; ++i) {
+        const int a = ring0 + i;
+        const int b = ring0 + (i + 1) % n_circ;
+        const int c = ring1 + i;
+        const int d = ring1 + (i + 1) % n_circ;
+        // Cylinder side (two triangles per quad).
+        out << "f " << a << " " << b << " " << d << "\n";
+        out << "f " << a << " " << d << " " << c << "\n";
+        // Cap fans.
+        out << "f " << center0 << " " << b << " " << a << "\n";
+        out << "f " << center1 << " " << c << " " << d << "\n";
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -177,6 +230,11 @@ int main(int argc, char **argv) {
 
     std::filesystem::create_directories(opts.out_dir);
     remove_stale_frames(opts.out_dir);
+    write_capsule_visual_obj(
+        Eigen::Vector3d(0.0, 0.0, -opts.tube_half_length),
+        Eigen::Vector3d(0.0, 0.0,  opts.tube_half_length),
+        opts.tube_radius, /*n_circ=*/24,
+        opts.out_dir + "/obstacle.obj");
 
     rsh::PathEnergyParams params;
     params.obstacle = &tube;
