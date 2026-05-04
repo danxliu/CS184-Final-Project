@@ -173,6 +173,9 @@ target_link_libraries(diagnose_bh_leaf PRIVATE rsh_core)
 add_executable(demo_compression tests/demo_compression.cpp)
 target_link_libraries(demo_compression PRIVATE rsh_core)
 
+add_executable(demo_phase3_ball_tube tests/demo_phase3_ball_tube.cpp)
+target_link_libraries(demo_phase3_ball_tube PRIVATE rsh_core)
+
 add_executable(bench_openmp_optimize tests/bench_openmp_optimize.cpp)
 target_link_libraries(bench_openmp_optimize PRIVATE rsh_core)
 
