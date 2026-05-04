@@ -100,8 +100,8 @@ target_link_libraries(demo_phase2_hs_flow PRIVATE rsh_core)
 add_executable(demo_canonical_genus0 tests/demo_canonical_genus0.cpp)
 target_link_libraries(demo_canonical_genus0 PRIVATE rsh_core)
 
-add_executable(demo_gallery_genus1 tests/demo_gallery_genus1.cpp)
-target_link_libraries(demo_gallery_genus1 PRIVATE rsh_core)
+add_executable(demo_gallery_genus0 tests/demo_gallery_genus0.cpp)
+target_link_libraries(demo_gallery_genus0 PRIVATE rsh_core)
 
 # add_executable(demo_interpolation tests/demo_interpolation.cpp)
 # target_link_libraries(demo_interpolation PRIVATE rsh_core)

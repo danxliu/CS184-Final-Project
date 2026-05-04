@@ -75,6 +75,15 @@ struct Tp0Row {
     double scaled_rel_max = 0.0;
 };
 
+struct FinalMeshParityRow {
+    std::string mesh;
+    int n_v = 0;
+    int n_f = 0;
+    double tpe_ours = 0.0;
+    double tpe_repulsor = 0.0;
+    double ratio_repulsor_over_ours = 0.0;
+};
+
 std::vector<double> row_major_vertices(const rsh::MeshData &mesh) {
     std::vector<double> out(static_cast<std::size_t>(mesh.n_vertices()) * 3);
     for (int i = 0; i < mesh.n_vertices(); ++i) {
@@ -207,6 +216,27 @@ Row evaluate(const std::filesystem::path &path,
     return row;
 }
 
+FinalMeshParityRow evaluate_final_mesh_parity(
+    const std::filesystem::path &path,
+    double alpha,
+    int max_leaf_size) {
+    const rsh::MeshData mesh = rsh::MeshData::load_obj(path.string());
+
+    FinalMeshParityRow row;
+    row.mesh = path.string();
+    row.n_v = mesh.n_vertices();
+    row.n_f = mesh.n_faces();
+    row.tpe_ours = rsh::tpe_energy_brute(mesh, alpha);
+
+    RepulsorMesh rep_mesh = make_repulsor_mesh(mesh, 0.0, max_leaf_size);
+    Repulsor::TangentPointEnergy_AllPairs<RepulsorMesh> tpe_allpairs(
+        alpha, 2.0 * alpha);
+    row.tpe_repulsor = tpe_allpairs.Value(rep_mesh);
+    row.ratio_repulsor_over_ours =
+        safe_ratio(row.tpe_repulsor, row.tpe_ours);
+    return row;
+}
+
 Tp0Row evaluate_tp0_matvec(const std::filesystem::path &path,
                            double theta,
                            int max_leaf_size) {
@@ -331,6 +361,31 @@ bool check_tp0_row(const Tp0Row &row) {
     return true;
 }
 
+void write_final_mesh_parity_row(std::ostream &out,
+                                 const FinalMeshParityRow &row) {
+    out << "final_mesh_parity"
+        << ",mesh=" << row.mesh
+        << ",n_v=" << row.n_v
+        << ",n_f=" << row.n_f
+        << ",tpe_ours=" << row.tpe_ours
+        << ",tpe_repulsor=" << row.tpe_repulsor
+        << ",ratio=" << row.ratio_repulsor_over_ours
+        << '\n';
+}
+
+bool check_final_mesh_parity_row(const FinalMeshParityRow &row) {
+    const bool ok =
+        std::isfinite(row.ratio_repulsor_over_ours) &&
+        std::abs(row.ratio_repulsor_over_ours - 1.0) < 1e-10;
+    if (!ok) {
+        std::cerr << "FAIL final mesh Repulsor parity for " << row.mesh
+                  << ": ratio=" << row.ratio_repulsor_over_ours
+                  << ", ours=" << row.tpe_ours
+                  << ", repulsor=" << row.tpe_repulsor << '\n';
+    }
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -339,17 +394,49 @@ int main(int argc, char **argv) {
     const std::vector<double> thetas = {0.0, 0.25, 0.5};
 
     bool tp0_only = false;
+    std::filesystem::path final_mesh;
     std::vector<std::filesystem::path> meshes;
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--tp0-only") {
                 tp0_only = true;
+            } else if (arg == "--final-mesh") {
+                if (i + 1 >= argc) {
+                    std::cerr << "--final-mesh requires a mesh path\n";
+                    return 1;
+                }
+                final_mesh = argv[++i];
+            } else if (arg.rfind("--final-mesh=", 0) == 0) {
+                final_mesh = arg.substr(std::string("--final-mesh=").size());
             } else {
                 meshes.emplace_back(arg);
             }
         }
     }
+
+    std::filesystem::create_directories("out/cross_val_repulsor");
+    std::cout << std::setprecision(17);
+
+    if (!final_mesh.empty()) {
+        if (!std::filesystem::exists(final_mesh)) {
+            std::cerr << "missing final mesh: " << final_mesh << '\n';
+            return 1;
+        }
+        const FinalMeshParityRow row =
+            evaluate_final_mesh_parity(final_mesh, alpha, max_leaf_size);
+        write_final_mesh_parity_row(std::cout, row);
+        std::ofstream csv("out/cross_val_repulsor/final_mesh_parity.csv");
+        if (!csv) {
+            std::cerr << "failed to open "
+                         "out/cross_val_repulsor/final_mesh_parity.csv\n";
+            return 1;
+        }
+        csv << std::setprecision(17);
+        write_final_mesh_parity_row(csv, row);
+        return check_final_mesh_parity_row(row) ? 0 : 2;
+    }
+
     if (meshes.empty()) {
         // Repulsor BCT0 showed an order-dependent NaN on torus_12x8 when
         // that smaller mesh was evaluated after the icospheres in one process.
@@ -359,9 +446,6 @@ int main(int argc, char **argv) {
             "assets/icosphere_3.obj",
         };
     }
-
-    std::filesystem::create_directories("out/cross_val_repulsor");
-    std::cout << std::setprecision(17);
 
     bool ok = true;
     if (!tp0_only) {

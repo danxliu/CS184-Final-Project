@@ -9,8 +9,10 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -30,10 +32,9 @@
 namespace {
 
 struct CliOptions {
-    int torus_nu = 24;
-    int torus_nv = 12;
+    int subdiv = 3;
     int max_iters = 200;
-    std::string out_dir = "out/gallery_genus1";
+    std::string out_dir = "out/gallery_genus0";
     bool dump_every_iter = false;
 };
 
@@ -93,17 +94,8 @@ CliOptions parse_args(int argc, char **argv) {
     CliOptions opts;
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
-        if (arg == "--torus_nu" || arg.rfind("--torus_nu=", 0) == 0) {
-            opts.torus_nu = parse_int_value(argc, argv, i, arg, "--torus_nu");
-        } else if (arg == "--torus-nu" ||
-                   arg.rfind("--torus-nu=", 0) == 0) {
-            opts.torus_nu = parse_int_value(argc, argv, i, arg, "--torus-nu");
-        } else if (arg == "--torus_nv" ||
-                   arg.rfind("--torus_nv=", 0) == 0) {
-            opts.torus_nv = parse_int_value(argc, argv, i, arg, "--torus_nv");
-        } else if (arg == "--torus-nv" ||
-                   arg.rfind("--torus-nv=", 0) == 0) {
-            opts.torus_nv = parse_int_value(argc, argv, i, arg, "--torus-nv");
+        if (arg == "--subdiv" || arg.rfind("--subdiv=", 0) == 0) {
+            opts.subdiv = parse_int_value(argc, argv, i, arg, "--subdiv");
         } else if (arg == "--max-iters" ||
                    arg.rfind("--max-iters=", 0) == 0) {
             opts.max_iters = parse_int_value(argc, argv, i, arg, "--max-iters");
@@ -116,8 +108,8 @@ CliOptions parse_args(int argc, char **argv) {
         }
     }
 
-    if (opts.torus_nu < 3 || opts.torus_nv < 3) {
-        throw std::runtime_error("torus dimensions must both be at least 3");
+    if (opts.subdiv < 0) {
+        throw std::runtime_error("--subdiv must be nonnegative");
     }
     if (opts.max_iters < 0) {
         throw std::runtime_error("--max-iters must be nonnegative");
@@ -142,7 +134,7 @@ double tpe_energy_for(const rsh::MeshData &mesh,
 
 void perturb_vertices(rsh::MeshData &mesh) {
     std::mt19937 rng(42);
-    std::normal_distribution<double> normal(0.0, 0.05 * mesh.L0);
+    std::normal_distribution<double> normal(0.0, 0.2 * mesh.L0);
     for (int v = 0; v < mesh.n_vertices(); ++v) {
         for (int c = 0; c < 3; ++c) {
             mesh.V(v, c) += normal(rng);
@@ -212,15 +204,14 @@ int remesh_energy_increase_count(const std::vector<EnergyRow> &rows) {
     return count;
 }
 
-bool two_largest_extents_close(const Eigen::Vector3d &ext,
-                               double rel_tol,
-                               double *relative_gap) {
-    std::array<double, 3> sorted = {ext(0), ext(1), ext(2)};
-    std::sort(sorted.begin(), sorted.end());
-    const double gap =
-        std::abs(sorted[2] - sorted[1]) / std::max(sorted[2], 1e-16);
-    if (relative_gap != nullptr) *relative_gap = gap;
-    return gap <= rel_tol;
+bool all_extents_close(const Eigen::Vector3d &ext,
+                       double rel_tol,
+                       double *relative_spread) {
+    const double max_ext = ext.maxCoeff();
+    const double min_ext = ext.minCoeff();
+    const double spread = (max_ext - min_ext) / std::max(max_ext, 1e-16);
+    if (relative_spread != nullptr) *relative_spread = spread;
+    return spread <= rel_tol;
 }
 
 int frame_count(const std::string &dir) {
@@ -237,15 +228,49 @@ int frame_count(const std::string &dir) {
     return count;
 }
 
+std::string shell_quote(const std::string &text) {
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+int run_repulsor_parity_if_available(const char *argv0,
+                                     const std::string &final_mesh_path) {
+    const std::filesystem::path exe_dir =
+        std::filesystem::absolute(argv0).parent_path();
+    const std::filesystem::path tool = exe_dir / "cross_validate_repulsor";
+    if (!std::filesystem::exists(tool)) {
+        std::cout << "repulsor_parity,enabled=0,message=skipping Repulsor "
+                     "parity - rebuild with -DRSH_HAVE_REPULSOR=ON to enable\n";
+        return 0;
+    }
+
+    const std::string command =
+        shell_quote(tool.string()) + " --final-mesh " +
+        shell_quote(final_mesh_path);
+    std::cout << "repulsor_parity,enabled=1,command="
+              << command << "\n";
+    std::cout.flush();
+    const int status = std::system(command.c_str());
+    std::cout << "repulsor_parity,enabled=1,command_status="
+              << status << "\n";
+    return status == 0 ? 0 : 2;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
     try {
         const CliOptions opts = parse_args(argc, argv);
 
-        rsh::MeshData mesh = rsh::make_torus(1.0, 0.4,
-                                             opts.torus_nu,
-                                             opts.torus_nv);
+        rsh::MeshData mesh = rsh::make_icosphere(opts.subdiv);
         mesh.normalize();
         perturb_vertices(mesh);
         mesh.normalize();
@@ -276,14 +301,15 @@ int main(int argc, char **argv) {
 
         result.final_mesh.save_obj(
             frame_path(opts.out_dir, result.iterations_completed));
+        const std::string final_mesh_path = opts.out_dir + "/final.obj";
+        result.final_mesh.save_obj(final_mesh_path);
 
         const std::vector<EnergyRow> rows =
             read_energy_rows(opts.out_dir + "/energy.csv");
         const Eigen::Vector3d ext1 = bbox_extents(result.final_mesh);
-        double bbox_symmetry_gap = 0.0;
-        const bool symmetry_ok =
-            two_largest_extents_close(ext1, 0.05, &bbox_symmetry_gap);
-        const bool monotone_ok = energy_monotone(rows);
+        double bbox_spread = 0.0;
+        const bool sphere_bbox_ok = all_extents_close(ext1, 0.05, &bbox_spread);
+        const bool csv_monotone_ok = energy_monotone(rows);
         const bool accepted_monotone_ok =
             accepted_nonremesh_energy_monotone(rows);
         const int remesh_energy_increases = remesh_energy_increase_count(rows);
@@ -299,9 +325,8 @@ int main(int argc, char **argv) {
         const double total_seconds =
             std::chrono::duration<double>(total_t1 - total_t0).count();
 
-        std::cout << "demo_gallery_genus1"
-                  << ",torus_nu=" << opts.torus_nu
-                  << ",torus_nv=" << opts.torus_nv
+        std::cout << "demo_gallery_genus0"
+                  << ",subdiv=" << opts.subdiv
                   << ",initial_faces=" << f0
                   << ",final_faces=" << result.final_mesh.n_faces()
                   << ",omp_threads=" << omp_threads
@@ -311,7 +336,7 @@ int main(int argc, char **argv) {
                   << ";" << ext0(2) << ")"
                   << ",final_bbox_extents=(" << ext1(0) << ";" << ext1(1)
                   << ";" << ext1(2) << ")"
-                  << ",bbox_largest_gap=" << bbox_symmetry_gap
+                  << ",bbox_relative_spread=" << bbox_spread
                   << ",iterations=" << result.iterations_completed
                   << ",remeshes=" << result.remeshes_completed
                   << ",frames=" << n_frames
@@ -321,12 +346,12 @@ int main(int argc, char **argv) {
                   << "\n";
 
         std::cout << "acceptance"
-                  << ",csv_energy_monotone=" << (monotone_ok ? 1 : 0)
+                  << ",csv_energy_monotone=" << (csv_monotone_ok ? 1 : 0)
                   << ",accepted_nonremesh_energy_monotone="
                   << (accepted_monotone_ok ? 1 : 0)
                   << ",remesh_energy_increases=" << remesh_energy_increases
-                  << ",two_largest_bbox_extents_within_5pct="
-                  << (symmetry_ok ? 1 : 0)
+                  << ",all_bbox_extents_within_5pct="
+                  << (sphere_bbox_ok ? 1 : 0)
                   << ",edge_manifold=" << (manifold_ok ? 1 : 0)
                   << ",face_count_in_range=" << (face_count_ok ? 1 : 0)
                   << ",at_least_5_remeshes=" << (remesh_ok ? 1 : 0)
@@ -335,10 +360,14 @@ int main(int argc, char **argv) {
         std::cout << "outputs"
                   << ",frames=" << opts.out_dir << "/frame_*.obj"
                   << ",energy_csv=" << opts.out_dir << "/energy.csv"
+                  << ",final_obj=" << final_mesh_path
                   << "\n";
+
+        const int parity_status =
+            run_repulsor_parity_if_available(argv[0], final_mesh_path);
+        return parity_status;
     } catch (const std::exception &e) {
-        std::cerr << "demo_gallery_genus1: " << e.what() << "\n";
+        std::cerr << "demo_gallery_genus0: " << e.what() << "\n";
         return 1;
     }
-    return 0;
 }
