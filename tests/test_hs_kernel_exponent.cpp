@@ -18,6 +18,7 @@
 #include <Eigen/Dense>
 
 #include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -1652,11 +1653,33 @@ void test_nullspace_and_spd() {
     check(q > 0.0, "mean-zero nonconstant field has positive A quadratic form");
 }
 
+bool env_flag_enabled(const char *name) {
+    const char *value = std::getenv(name);
+    if (value == nullptr) return false;
+    const std::string s(value);
+    return s == "1" || s == "true" || s == "TRUE" || s == "on" || s == "ON";
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    bool skip_heavy = env_flag_enabled("RSH_SKIP_HEAVY_TESTS");
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg(argv[i]);
+        if (arg == "--skip-heavy") {
+            skip_heavy = true;
+        } else {
+            std::cout << "Unknown argument: " << arg << "\n";
+            return 2;
+        }
+    }
+
     std::cout << std::setprecision(17);
     std::cout << "=== Hs A = B + B_0 validation ===\n";
+    if (skip_heavy) {
+        std::cout << "Skipping heavy resolution diagnostics "
+                  << "(--skip-heavy / RSH_SKIP_HEAVY_TESTS).\n";
+    }
 
     test_two_triangle_hand_case();
     test_vector_two_triangle_hand_case();
@@ -1675,9 +1698,11 @@ int main() {
     test_sandwich_psd_probe();
     test_vector_sandwich_psd_probe();
     test_sandwich_solver_sanity();
-    test_sandwich_resolution_diagnostics();
-    test_vector_sandwich_resolution_diagnostics();
-    test_icosphere5_left_h1_probe();
+    if (!skip_heavy) {
+        test_sandwich_resolution_diagnostics();
+        test_vector_sandwich_resolution_diagnostics();
+        test_icosphere5_left_h1_probe();
+    }
     test_compression_gradient_descent_safeguard();
     test_nullspace_and_spd();
 

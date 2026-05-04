@@ -39,6 +39,37 @@ double face_area2(const std::vector<Eigen::Vector3d> &V,
     return face_normal_raw(V, f).norm();
 }
 
+Eigen::Vector3d face_normal_raw_mesh(const MeshData &mesh, int f) {
+    const Eigen::Vector3d p0 = mesh.V.row(mesh.F(f, 0)).transpose();
+    const Eigen::Vector3d p1 = mesh.V.row(mesh.F(f, 1)).transpose();
+    const Eigen::Vector3d p2 = mesh.V.row(mesh.F(f, 2)).transpose();
+    return (p1 - p0).cross(p2 - p0);
+}
+
+void recompute_vertex_normals(MeshData &mesh) {
+    mesh.N = Eigen::MatrixXd::Zero(mesh.n_vertices(), 3);
+    for (int f = 0; f < mesh.n_faces(); ++f) {
+        const Eigen::Vector3d n = face_normal_raw_mesh(mesh, f);
+        mesh.N.row(mesh.F(f, 0)) += n.transpose();
+        mesh.N.row(mesh.F(f, 1)) += n.transpose();
+        mesh.N.row(mesh.F(f, 2)) += n.transpose();
+    }
+    for (int i = 0; i < mesh.n_vertices(); ++i) {
+        const double nn = mesh.N.row(i).norm();
+        if (nn > 0.0) mesh.N.row(i) /= nn;
+    }
+}
+
+MeshData finalize_meshdata(MeshData mesh, double target_l0, bool had_normals) {
+    mesh.L0 = target_l0;
+    if (had_normals) {
+        recompute_vertex_normals(mesh);
+    } else {
+        mesh.N.resize(0, 0);
+    }
+    return mesh;
+}
+
 std::vector<Edge> collect_edges(const MeshState &state) {
     std::map<std::pair<int, int>, int> seen;
     for (const Eigen::Vector3i &f : state.F) {
@@ -331,6 +362,89 @@ void collapse_short_edges(MeshState &state, double collapse_threshold) {
     }
 }
 
+double clamp_unit(double x) {
+    return std::max(-1.0, std::min(1.0, x));
+}
+
+double angle_at(const Eigen::Vector3d &a,
+                const Eigen::Vector3d &b,
+                const Eigen::Vector3d &c) {
+    const Eigen::Vector3d u = b - a;
+    const Eigen::Vector3d v = c - a;
+    const double denom = u.norm() * v.norm();
+    if (!(denom > 0.0)) return 0.0;
+    return std::acos(clamp_unit(u.dot(v) / denom));
+}
+
+bool is_non_delaunay_edge(const OMesh &om, OMesh::EdgeHandle eh) {
+    if (!om.is_flip_ok(eh)) return false;
+
+    const auto h0 = om.halfedge_handle(eh, 0);
+    const auto h1 = om.halfedge_handle(eh, 1);
+    const auto f0 = om.face_handle(h0);
+    const auto f1 = om.face_handle(h1);
+    if (!f0.is_valid() || !f1.is_valid()) return false;
+
+    const auto va = om.from_vertex_handle(h0);
+    const auto vb = om.to_vertex_handle(h0);
+    const auto vc = om.opposite_vh(h0);
+    const auto vd = om.opposite_vh(h1);
+    if (!va.is_valid() || !vb.is_valid() || !vc.is_valid() || !vd.is_valid()) {
+        return false;
+    }
+
+    auto point = [&om](OMesh::VertexHandle vh) {
+        const auto p = om.point(vh);
+        return Eigen::Vector3d(p[0], p[1], p[2]);
+    };
+
+    const double a0 = angle_at(point(vc), point(va), point(vb));
+    const double a1 = angle_at(point(vd), point(va), point(vb));
+    return a0 + a1 > M_PI + 1e-12;
+}
+
+Eigen::Vector3d triangle_circumcenter(const Eigen::Vector3d &a,
+                                      const Eigen::Vector3d &b,
+                                      const Eigen::Vector3d &c) {
+    const Eigen::Vector3d u = b - a;
+    const Eigen::Vector3d v = c - a;
+    const Eigen::Vector3d n = u.cross(v);
+    const double n2 = n.squaredNorm();
+    if (!(n2 > 1e-30)) {
+        return (a + b + c) / 3.0;
+    }
+    return a + (u.squaredNorm() * v.cross(n) +
+                v.squaredNorm() * n.cross(u)) / (2.0 * n2);
+}
+
+std::vector<std::vector<int>> incident_faces(const MeshData &mesh) {
+    std::vector<std::vector<int>> inc(static_cast<size_t>(mesh.n_vertices()));
+    for (int f = 0; f < mesh.n_faces(); ++f) {
+        inc[static_cast<size_t>(mesh.F(f, 0))].push_back(f);
+        inc[static_cast<size_t>(mesh.F(f, 1))].push_back(f);
+        inc[static_cast<size_t>(mesh.F(f, 2))].push_back(f);
+    }
+    return inc;
+}
+
+std::vector<char> boundary_vertices(const MeshData &mesh) {
+    std::map<std::pair<int, int>, int> edge_count;
+    for (int f = 0; f < mesh.n_faces(); ++f) {
+        for (int k = 0; k < 3; ++k) {
+            edge_count[ordered_edge(mesh.F(f, k), mesh.F(f, (k + 1) % 3))]++;
+        }
+    }
+
+    std::vector<char> boundary(static_cast<size_t>(mesh.n_vertices()), 0);
+    for (const auto &item : edge_count) {
+        if (item.second == 1) {
+            boundary[static_cast<size_t>(item.first.first)] = 1;
+            boundary[static_cast<size_t>(item.first.second)] = 1;
+        }
+    }
+    return boundary;
+}
+
 } // namespace
 
 MeshData remesh_split_collapse(const MeshData &mesh) {
@@ -356,6 +470,92 @@ MeshData remesh_split_collapse(const MeshData &mesh) {
     collapse_short_edges(state, collapse_threshold);
 
     return to_meshdata(state, target_l0, had_normals);
+}
+
+MeshData remesh_delaunay_flip(const MeshData &mesh, int max_passes) {
+    const double target_l0 = mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();
+    const bool had_normals = mesh.N.rows() == mesh.V.rows();
+    OMesh om = mesh.to_openmesh();
+
+    const int capped_passes = std::max(0, max_passes);
+    for (int pass = 0; pass < capped_passes; ++pass) {
+        std::vector<int> edge_ids;
+        edge_ids.reserve(om.n_edges());
+        for (auto e_it = om.edges_begin(); e_it != om.edges_end(); ++e_it) {
+            edge_ids.push_back(e_it->idx());
+        }
+
+        bool flipped_any = false;
+        for (int edge_id : edge_ids) {
+            if (edge_id < 0 || edge_id >= static_cast<int>(om.n_edges())) continue;
+            const auto eh = OMesh::EdgeHandle(edge_id);
+            if (!is_non_delaunay_edge(om, eh)) continue;
+            om.flip(eh);
+            flipped_any = true;
+        }
+        if (!flipped_any) break;
+    }
+
+    return finalize_meshdata(MeshData::from_openmesh(om), target_l0, had_normals);
+}
+
+MeshData remesh_tangential_smooth(const MeshData &mesh,
+                                  double rho,
+                                  int n_iters) {
+    const double target_l0 = mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();
+    const bool had_normals = mesh.N.rows() == mesh.V.rows();
+    MeshData out = mesh;
+    out.L0 = target_l0;
+    if (out.n_faces() == 0 || out.n_vertices() == 0 || n_iters <= 0 ||
+        rho == 0.0) {
+        return finalize_meshdata(out, target_l0, had_normals);
+    }
+
+    const std::vector<std::vector<int>> inc = incident_faces(out);
+    const std::vector<char> boundary = boundary_vertices(out);
+    for (int iter = 0; iter < n_iters; ++iter) {
+        Eigen::MatrixXd next = out.V;
+        for (int v = 0; v < out.n_vertices(); ++v) {
+            if (boundary[static_cast<size_t>(v)] ||
+                inc[static_cast<size_t>(v)].empty()) {
+                continue;
+            }
+
+            Eigen::Vector3d weighted_center = Eigen::Vector3d::Zero();
+            Eigen::Vector3d normal = Eigen::Vector3d::Zero();
+            double area_sum = 0.0;
+            for (int f : inc[static_cast<size_t>(v)]) {
+                const Eigen::Vector3d p0 = out.V.row(out.F(f, 0)).transpose();
+                const Eigen::Vector3d p1 = out.V.row(out.F(f, 1)).transpose();
+                const Eigen::Vector3d p2 = out.V.row(out.F(f, 2)).transpose();
+                const Eigen::Vector3d n_raw = (p1 - p0).cross(p2 - p0);
+                const double area = 0.5 * n_raw.norm();
+                if (!(area > 0.0)) continue;
+                weighted_center += area * triangle_circumcenter(p0, p1, p2);
+                normal += n_raw;
+                area_sum += area;
+            }
+            const double nn = normal.norm();
+            if (!(area_sum > 0.0) || !(nn > 0.0)) continue;
+
+            const Eigen::Vector3d target = weighted_center / area_sum;
+            const Eigen::Vector3d n = normal / nn;
+            Eigen::Vector3d delta = rho * (target - out.V.row(v).transpose());
+            delta -= delta.dot(n) * n;
+            next.row(v) += delta.transpose();
+        }
+        out.V = std::move(next);
+    }
+
+    return finalize_meshdata(out, target_l0, had_normals);
+}
+
+MeshData remesh_full(const MeshData &mesh) {
+    MeshData out = remesh_split_collapse(mesh);
+    out = remesh_delaunay_flip(out);
+    out = remesh_tangential_smooth(out);
+    out.L0 = mesh.L0 > 0.0 ? mesh.L0 : mesh.compute_L0();
+    return out;
 }
 
 } // namespace rsh

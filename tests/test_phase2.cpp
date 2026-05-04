@@ -44,6 +44,7 @@ struct MeshQuality {
     int min_valence = std::numeric_limits<int>::max();
     int max_valence = 0;
     double max_aspect = 0.0;
+    double mean_aspect = 0.0;
     bool edge_manifold = true;
 };
 
@@ -71,10 +72,16 @@ MeshQuality measure_mesh_quality(const MeshData &m) {
             longest = std::max(longest, (m.V.row(a) - m.V.row(b)).norm());
         }
         if (area2 > 0.0) {
-            q.max_aspect = std::max(q.max_aspect, longest * longest / area2);
+            const double aspect = longest * longest / area2;
+            q.max_aspect = std::max(q.max_aspect, aspect);
+            q.mean_aspect += aspect;
         } else {
             q.max_aspect = std::numeric_limits<double>::infinity();
+            q.mean_aspect = std::numeric_limits<double>::infinity();
         }
+    }
+    if (m.n_faces() > 0 && std::isfinite(q.mean_aspect)) {
+        q.mean_aspect /= static_cast<double>(m.n_faces());
     }
 
     for (const auto &item : edges) {
@@ -100,6 +107,80 @@ bool has_vertex_near(const MeshData &m, const Eigen::Vector3d &p, double tol) {
         if ((m.V.row(i).transpose() - p).norm() <= tol) return true;
     }
     return false;
+}
+
+bool has_edge(const MeshData &m, int a, int b) {
+    const auto key = edge_key(a, b);
+    for (int f = 0; f < m.n_faces(); ++f) {
+        for (int k = 0; k < 3; ++k) {
+            if (edge_key(m.F(f, k), m.F(f, (k + 1) % 3)) == key) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+Eigen::Vector3d triangle_circumcenter_test(const Eigen::Vector3d &a,
+                                           const Eigen::Vector3d &b,
+                                           const Eigen::Vector3d &c) {
+    const Eigen::Vector3d u = b - a;
+    const Eigen::Vector3d v = c - a;
+    const Eigen::Vector3d n = u.cross(v);
+    const double n2 = n.squaredNorm();
+    if (!(n2 > 1e-30)) return (a + b + c) / 3.0;
+    return a + (u.squaredNorm() * v.cross(n) +
+                v.squaredNorm() * n.cross(u)) / (2.0 * n2);
+}
+
+Eigen::Vector3d vertex_normal(const MeshData &m, int vertex) {
+    Eigen::Vector3d n = Eigen::Vector3d::Zero();
+    for (int f = 0; f < m.n_faces(); ++f) {
+        bool incident = false;
+        for (int k = 0; k < 3; ++k) incident = incident || m.F(f, k) == vertex;
+        if (!incident) continue;
+        const Eigen::Vector3d p0 = m.V.row(m.F(f, 0)).transpose();
+        const Eigen::Vector3d p1 = m.V.row(m.F(f, 1)).transpose();
+        const Eigen::Vector3d p2 = m.V.row(m.F(f, 2)).transpose();
+        n += (p1 - p0).cross(p2 - p0);
+    }
+    const double nn = n.norm();
+    if (nn > 0.0) return n / nn;
+    return Eigen::Vector3d::UnitZ();
+}
+
+MeshData make_smoothing_fan() {
+    MeshData m;
+    m.V.resize(7, 3);
+    m.V.row(0) << 0.2, 0.0, 0.0;
+    for (int i = 0; i < 6; ++i) {
+        const double a = 2.0 * M_PI * static_cast<double>(i) / 6.0;
+        m.V.row(i + 1) << std::cos(a), std::sin(a), 0.0;
+    }
+    m.F.resize(6, 3);
+    for (int i = 0; i < 6; ++i) {
+        m.F.row(i) << 0, i + 1, 1 + ((i + 1) % 6);
+    }
+    m.L0 = m.compute_L0();
+    return m;
+}
+
+Eigen::Vector3d smoothing_target_for_vertex(const MeshData &m, int vertex) {
+    Eigen::Vector3d weighted = Eigen::Vector3d::Zero();
+    double area_sum = 0.0;
+    for (int f = 0; f < m.n_faces(); ++f) {
+        bool incident = false;
+        for (int k = 0; k < 3; ++k) incident = incident || m.F(f, k) == vertex;
+        if (!incident) continue;
+        const Eigen::Vector3d p0 = m.V.row(m.F(f, 0)).transpose();
+        const Eigen::Vector3d p1 = m.V.row(m.F(f, 1)).transpose();
+        const Eigen::Vector3d p2 = m.V.row(m.F(f, 2)).transpose();
+        const double area = 0.5 * (p1 - p0).cross(p2 - p0).norm();
+        weighted += area * triangle_circumcenter_test(p0, p1, p2);
+        area_sum += area;
+    }
+    if (area_sum > 0.0) return weighted / area_sum;
+    return m.V.row(vertex).transpose();
 }
 
 MeshData deterministically_perturbed_icosphere(int subdiv) {
@@ -440,6 +521,126 @@ void test_remesh_icosphere3_quality() {
           "icosphere_3 remesh face count remains reasonable");
 }
 
+void test_remesh_delaunay_flip_yes_case() {
+    std::cout << "-- remesh Delaunay flip yes-case --\n";
+    MeshData m;
+    m.V.resize(4, 3);
+    m.V << 0.0, 0.0, 0.0,
+           2.0, 0.0, 0.0,
+           2.0, 1.0, 0.0,
+           0.0, 0.2, 0.0;
+    m.F.resize(2, 3);
+    m.F << 0, 1, 2,
+           0, 2, 3;
+    m.L0 = m.compute_L0();
+
+    const MeshData r = remesh_delaunay_flip(m);
+    std::cout << "    had edge 0-2 = " << has_edge(m, 0, 2)
+              << ", result edge 1-3 = " << has_edge(r, 1, 3) << "\n";
+    check(!has_edge(r, 0, 2), "non-Delaunay diagonal is removed");
+    check(has_edge(r, 1, 3), "Delaunay diagonal is inserted");
+}
+
+void test_remesh_delaunay_flip_no_case() {
+    std::cout << "-- remesh Delaunay flip no-case --\n";
+    MeshData m;
+    m.V.resize(4, 3);
+    m.V << 0.0, 0.0, 0.0,
+           2.0, 0.0, 0.0,
+           2.0, 1.0, 0.0,
+           0.0, 0.2, 0.0;
+    m.F.resize(2, 3);
+    m.F << 0, 1, 3,
+           1, 2, 3;
+    m.L0 = m.compute_L0();
+
+    const MeshData r = remesh_delaunay_flip(m);
+    check(has_edge(r, 1, 3), "Delaunay diagonal remains in place");
+    check(!has_edge(r, 0, 2), "no alternate diagonal is inserted");
+}
+
+void test_remesh_tangential_smooth_circumcenter_step() {
+    std::cout << "-- remesh tangential smooth moves toward circumcenter target --\n";
+    MeshData m = make_smoothing_fan();
+    const Eigen::Vector3d p0 = m.V.row(0).transpose();
+    const Eigen::Vector3d target = smoothing_target_for_vertex(m, 0);
+    const MeshData r = remesh_tangential_smooth(m, 0.5, 1);
+    const Eigen::Vector3d p1 = r.V.row(0).transpose();
+    const Eigen::Vector3d expected = p0 + 0.5 * (target - p0);
+    const double err = (p1 - expected).norm();
+    std::cout << "    target = " << target.transpose()
+              << ", moved = " << (p1 - p0).transpose()
+              << ", err = " << err << "\n";
+    check(err < 1e-12, "center vertex follows rho-scaled circumcenter target");
+}
+
+void test_remesh_tangential_smooth_tangent_plane() {
+    std::cout << "-- remesh tangential smooth stays tangent on icosphere --\n";
+    MeshData m = make_icosphere(2);
+    m.normalize();
+    double max_normal_motion = 0.0;
+    for (int iter = 0; iter < 5; ++iter) {
+        std::vector<Eigen::Vector3d> normals(static_cast<size_t>(m.n_vertices()));
+        for (int v = 0; v < m.n_vertices(); ++v) {
+            normals[static_cast<size_t>(v)] = vertex_normal(m, v);
+        }
+        const MeshData next = remesh_tangential_smooth(m, 0.5, 1);
+        for (int v = 0; v < m.n_vertices(); ++v) {
+            const Eigen::Vector3d delta =
+                next.V.row(v).transpose() - m.V.row(v).transpose();
+            max_normal_motion = std::max(
+                max_normal_motion,
+                std::abs(delta.dot(normals[static_cast<size_t>(v)])));
+        }
+        m = next;
+    }
+    std::cout << "    max normal displacement component = "
+              << max_normal_motion << "\n";
+    check(max_normal_motion < 1e-10,
+          "smoothing displacement is tangent to the pre-step normals");
+}
+
+void test_remesh_full_icosphere2_quality() {
+    std::cout << "-- remesh_full perturbed icosphere_2 quality --\n";
+    MeshData m = deterministically_perturbed_icosphere(2);
+    const MeshData sc = remesh_split_collapse(m);
+    const MeshQuality q_sc = measure_mesh_quality(sc);
+    const MeshData flipped = remesh_delaunay_flip(sc);
+    const MeshData full = remesh_tangential_smooth(flipped);
+    const MeshQuality q = measure_mesh_quality(full);
+    const double displacement = (full.n_vertices() == flipped.n_vertices())
+                                    ? (full.V - flipped.V).rowwise().norm().maxCoeff()
+                                    : 0.0;
+    std::cout << "    split/collapse mean_aspect = " << q_sc.mean_aspect
+              << ", full mean_aspect = " << q.mean_aspect
+              << ", full max_aspect = " << q.max_aspect
+              << ", displacement = " << displacement << "\n";
+    check(q.max_edge <= (4.0 / 3.0) * m.L0 * 1.05,
+          "remesh_full max edge stays below split threshold slack");
+    check(q.min_edge >= (4.0 / 5.0) * m.L0 * 0.95,
+          "remesh_full min edge stays above collapse threshold slack");
+    check(q.mean_aspect <= q_sc.mean_aspect + 1e-12,
+          "flip and smooth do not worsen mean aspect ratio");
+    check(q.edge_manifold, "remesh_full output remains edge-manifold");
+    check(displacement < 0.1 * m.bbox_diagonal(),
+          "smoothing displacement remains small relative to mesh diameter");
+}
+
+void test_remesh_full_icosphere3_quality() {
+    std::cout << "-- remesh_full perturbed icosphere_3 quality --\n";
+    MeshData m = deterministically_perturbed_icosphere(3);
+    const MeshQuality q0 = measure_mesh_quality(m);
+    const MeshData full = remesh_full(m);
+    const MeshQuality q = measure_mesh_quality(full);
+    std::cout << "    input mean_aspect = " << q0.mean_aspect
+              << ", full mean_aspect = " << q.mean_aspect
+              << ", full max_aspect = " << q.max_aspect << "\n";
+    check(q.mean_aspect <= q0.mean_aspect + 1e-12,
+          "icosphere_3 full remesh improves mean aspect ratio");
+    check(q.max_aspect < 5.0, "icosphere_3 full remesh max aspect stays below 5");
+    check(q.edge_manifold, "icosphere_3 full remesh remains edge-manifold");
+}
+
 } // namespace
 
 int main() {
@@ -453,6 +654,12 @@ int main() {
     test_remesh_valence_guard_rejection();
     test_remesh_icosphere2_bounds();
     test_remesh_icosphere3_quality();
+    test_remesh_delaunay_flip_yes_case();
+    test_remesh_delaunay_flip_no_case();
+    test_remesh_tangential_smooth_circumcenter_step();
+    test_remesh_tangential_smooth_tangent_plane();
+    test_remesh_full_icosphere2_quality();
+    test_remesh_full_icosphere3_quality();
     test_interpolation_decreases_energy();
     test_extrapolation_stability();
     test_extrapolation_with_repulsion();
