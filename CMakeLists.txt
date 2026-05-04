@@ -46,6 +46,7 @@ set(RSH_CORE_SOURCES
     src/core/TrustRegionSolver.cpp
     src/core/ExtrapolationSolver.cpp
     src/core/Constraints.cpp
+    src/core/Obstacle.cpp
     src/core/Remesh.cpp
     src/core/OptimizeTPE.cpp
     src/core/TPE.cpp
@@ -115,6 +116,9 @@ target_link_libraries(test_phase1 PRIVATE rsh_core)
 
 add_executable(test_phase2 tests/test_phase2.cpp)
 target_link_libraries(test_phase2 PRIVATE rsh_core)
+
+add_executable(test_phase3 tests/test_phase3.cpp)
+target_link_libraries(test_phase3 PRIVATE rsh_core)
 
 add_executable(test_hs_kernel_exponent tests/test_hs_kernel_exponent.cpp)
 target_link_libraries(test_hs_kernel_exponent PRIVATE rsh_core)
