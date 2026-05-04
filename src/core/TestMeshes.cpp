@@ -1,7 +1,12 @@
 #include "TestMeshes.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <set>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -55,6 +60,24 @@ int get_midpoint(int a, int b,
     verts.push_back(m);
     cache.emplace(key, idx);
     return idx;
+}
+
+int closest_face_to_point(const MeshData &mesh, const Eigen::Vector3d &target) {
+    int best_face = -1;
+    double best_d2 = std::numeric_limits<double>::infinity();
+    for (int f = 0; f < mesh.n_faces(); ++f) {
+        Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
+        for (int k = 0; k < 3; ++k) {
+            centroid += mesh.V.row(mesh.F(f, k)).transpose();
+        }
+        centroid /= 3.0;
+        const double d2 = (centroid - target).squaredNorm();
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best_face = f;
+        }
+    }
+    return best_face;
 }
 
 } // namespace
@@ -126,6 +149,114 @@ MeshData make_torus(double R, double r, int nu, int nv) {
             mesh.F.row(fidx + 1) << a, c, d;
         }
     }
+    return mesh;
+}
+
+MeshData make_n_torus(int genus,
+                      double R,
+                      double r,
+                      int nu_per_torus,
+                      int nv) {
+    if (genus < 1) {
+        throw std::runtime_error("make_n_torus: genus must be at least 1");
+    }
+    if (R <= 0.0 || r <= 0.0 || R <= r) {
+        throw std::runtime_error("make_n_torus: require R > r > 0");
+    }
+    if (nu_per_torus < 6 || nv < 4) {
+        throw std::runtime_error(
+            "make_n_torus: require nu_per_torus >= 6 and nv >= 4");
+    }
+
+    if (genus == 1) {
+        MeshData torus = make_torus(R, r, nu_per_torus, nv);
+        torus.L0 = torus.compute_L0();
+        return torus;
+    }
+
+    const MeshData base = make_torus(R, r, nu_per_torus, nv);
+    const int base_nv = base.n_vertices();
+    const int base_nf = base.n_faces();
+    const int right_face =
+        closest_face_to_point(base, Eigen::Vector3d(R + r, 0.0, 0.0));
+    const int left_face =
+        closest_face_to_point(base, Eigen::Vector3d(-(R + r), 0.0, 0.0));
+    if (right_face < 0 || left_face < 0 || right_face == left_face) {
+        throw std::runtime_error("make_n_torus: failed to choose bridge caps");
+    }
+
+    struct Bridge {
+        int left_torus = 0;
+        int right_torus = 0;
+        Eigen::Vector3i left_loop = Eigen::Vector3i::Zero();
+        Eigen::Vector3i right_loop = Eigen::Vector3i::Zero();
+    };
+
+    std::vector<std::set<int>> omitted_faces(static_cast<size_t>(genus));
+    std::vector<Bridge> bridges;
+    bridges.reserve(static_cast<size_t>(genus - 1));
+    for (int k = 0; k + 1 < genus; ++k) {
+        omitted_faces[static_cast<size_t>(k)].insert(right_face);
+        omitted_faces[static_cast<size_t>(k + 1)].insert(left_face);
+        Bridge bridge;
+        bridge.left_torus = k;
+        bridge.right_torus = k + 1;
+        bridge.left_loop = base.F.row(right_face).transpose();
+        bridge.right_loop = base.F.row(left_face).transpose();
+        bridges.push_back(bridge);
+    }
+
+    const double bridge_gap = 4.0 * r / static_cast<double>(nu_per_torus);
+    const double spacing = 2.0 * (R + r) + bridge_gap;
+
+    MeshData mesh;
+    mesh.V.resize(genus * base_nv, 3);
+    mesh.N.resize(0, 3);
+    for (int torus = 0; torus < genus; ++torus) {
+        const Eigen::RowVector3d shift(torus * spacing, 0.0, 0.0);
+        const int offset = torus * base_nv;
+        for (int v = 0; v < base_nv; ++v) {
+            mesh.V.row(offset + v) = base.V.row(v) + shift;
+        }
+    }
+
+    std::vector<Eigen::Vector3i> faces;
+    faces.reserve(static_cast<size_t>(genus * base_nf + 6 * (genus - 1)));
+    for (int torus = 0; torus < genus; ++torus) {
+        const int offset = torus * base_nv;
+        const auto &omit = omitted_faces[static_cast<size_t>(torus)];
+        for (int f = 0; f < base_nf; ++f) {
+            if (omit.find(f) != omit.end()) continue;
+            faces.push_back(base.F.row(f).transpose() +
+                            Eigen::Vector3i::Constant(offset));
+        }
+    }
+
+    for (const Bridge &bridge : bridges) {
+        std::array<int, 3> a = {
+            bridge.left_torus * base_nv + bridge.left_loop[0],
+            bridge.left_torus * base_nv + bridge.left_loop[1],
+            bridge.left_torus * base_nv + bridge.left_loop[2],
+        };
+        const std::array<int, 3> b_removed = {
+            bridge.right_torus * base_nv + bridge.right_loop[0],
+            bridge.right_torus * base_nv + bridge.right_loop[1],
+            bridge.right_torus * base_nv + bridge.right_loop[2],
+        };
+        const std::array<int, 3> b = {b_removed[0], b_removed[2],
+                                      b_removed[1]};
+        for (int i = 0; i < 3; ++i) {
+            const int j = (i + 1) % 3;
+            faces.emplace_back(a[i], a[j], b[j]);
+            faces.emplace_back(a[i], b[j], b[i]);
+        }
+    }
+
+    mesh.F.resize(static_cast<int>(faces.size()), 3);
+    for (int f = 0; f < static_cast<int>(faces.size()); ++f) {
+        mesh.F.row(f) = faces[static_cast<size_t>(f)].transpose();
+    }
+    mesh.L0 = mesh.compute_L0();
     return mesh;
 }
 

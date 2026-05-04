@@ -15,6 +15,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -114,6 +115,78 @@ void test_icosphere_invariants() {
     const double total_area = g.A.sum();
     check(std::abs(total_area - 4.0 * M_PI) < 0.5,
           "total area approximates 4π (sphere surface)");
+}
+
+std::pair<int, int> mesh_edge_key(int a, int b) {
+    if (a > b) std::swap(a, b);
+    return {a, b};
+}
+
+std::map<std::pair<int, int>, int> mesh_edge_counts(const MeshData &mesh) {
+    std::map<std::pair<int, int>, int> counts;
+    for (int f = 0; f < mesh.n_faces(); ++f) {
+        for (int k = 0; k < 3; ++k) {
+            ++counts[mesh_edge_key(mesh.F(f, k), mesh.F(f, (k + 1) % 3))];
+        }
+    }
+    return counts;
+}
+
+bool has_duplicate_vertices(const MeshData &mesh, double tol = 1e-12) {
+    const double tol2 = tol * tol;
+    for (int i = 0; i < mesh.n_vertices(); ++i) {
+        for (int j = i + 1; j < mesh.n_vertices(); ++j) {
+            if ((mesh.V.row(i) - mesh.V.row(j)).squaredNorm() <= tol2) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void test_make_n_torus_topology() {
+    std::cout << "-- connected-sum n-torus topology checks --\n";
+    for (int genus = 1; genus <= 3; ++genus) {
+        MeshData m = make_n_torus(genus, 1.0, 0.3, 18, 10);
+        const FaceGeom g = compute_face_geom(m);
+        const auto edge_counts = mesh_edge_counts(m);
+        const int V = m.n_vertices();
+        const int E = static_cast<int>(edge_counts.size());
+        const int F = m.n_faces();
+        const int chi = V - E + F;
+        const int expected_chi = 2 - 2 * genus;
+
+        bool edge_manifold = true;
+        bool closed = true;
+        for (const auto &item : edge_counts) {
+            edge_manifold = edge_manifold && item.second <= 2;
+            closed = closed && item.second == 2;
+        }
+
+        std::cout << "    genus=" << genus
+                  << ", V=" << V
+                  << ", E=" << E
+                  << ", F=" << F
+                  << ", chi=" << chi
+                  << ", expected_chi=" << expected_chi
+                  << ", min_area=" << g.A.minCoeff()
+                  << "\n";
+        check(chi == expected_chi,
+              "make_n_torus(" + std::to_string(genus) +
+                  ") has Euler chi = 2 - 2g");
+        check(edge_manifold,
+              "make_n_torus(" + std::to_string(genus) +
+                  ") has no edge with >2 incident faces");
+        check(closed,
+              "make_n_torus(" + std::to_string(genus) +
+                  ") has no boundary edges");
+        check(g.A.minCoeff() > 1e-12,
+              "make_n_torus(" + std::to_string(genus) +
+                  ") has no degenerate faces");
+        check(!has_duplicate_vertices(m),
+              "make_n_torus(" + std::to_string(genus) +
+                  ") has no duplicate vertices");
+    }
 }
 
 // Pick a random non-degenerate triangle for Jacobian checks.
@@ -1399,6 +1472,7 @@ int main() {
     std::cout << "=== Phase 1.1–1.7 smoke tests ===\n";
     test_unit_triangle();
     test_icosphere_invariants();
+    test_make_n_torus_topology();
     test_jacobians_fd();
     test_translation_and_shear_invariants();
     test_tpe_two_triangle_toy();
