@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Limitless: Infinity | Final Slides</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            :root {
+                --bg: #f0f2f5;
+                --surface: #e6e9ee;
+                --border: #cdd2d9;
+                --text: #1e2a38;
+                --text-dim: #4a5568;
+                --label: #8896a7;
+            }
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                background: var(--bg);
+                color: var(--text);
+                font-family: "Alegreya Sans", sans-serif;
+                font-size: 15px;
+                line-height: 1.65;
+                -webkit-font-smoothing: antialiased;
+            }
+            .hero,
+            .content {
+                max-width: 960px;
+                margin: 0 auto;
+                padding: 0 2rem;
+            }
+            .hero {
+                padding-top: 4rem;
+                padding-bottom: 2rem;
+            }
+            .hero-label {
+                color: var(--label);
+                font-size: 0.74rem;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+            }
+            h1 {
+                font-size: clamp(2.9rem, 8vw, 5rem);
+                font-weight: 400;
+                line-height: 1.02;
+                margin: 0.7rem 0 1rem;
+            }
+            p {
+                color: var(--text-dim);
+                margin-bottom: 0.9rem;
+            }
+            a {
+                color: var(--text);
+                text-decoration-color: var(--border);
+                text-underline-offset: 3px;
+            }
+            .links {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.9rem 1.4rem;
+                margin-top: 0.7rem;
+            }
+            .links a {
+                color: var(--text-dim);
+                font-size: 0.93rem;
+            }
+            .pdf-frame {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 0.65rem;
+            }
+            .pdf-frame iframe {
+                border: 0;
+                display: block;
+                height: min(76vh, 720px);
+                width: 100%;
+            }
+            @media (max-width: 700px) {
+                .hero,
+                .content {
+                    padding-left: 1rem;
+                    padding-right: 1rem;
+                }
+                .pdf-frame iframe {
+                    height: 64vh;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <header class="hero">
+            <div class="hero-label">CS 184 · Spring 2026 · Final Slides</div>
+            <h1>Limitless: Infinity</h1>
+            <p>
+                Beamer slides for the two-minute final project video,
+                matching the visual style of the milestone deck.
+            </p>
+            <div class="links">
+                <a href="index.html">Final report</a>
+                <a href="final_video.html">Final video</a>
+                <a href="final_video_slides.pdf">Open PDF</a>
+                <a href="final_video_script.md">Voiceover script</a>
+            </div>
+        </header>
+
+        <main class="content">
+            <div class="pdf-frame">
+                <iframe
+                    src="final_video_slides.pdf"
+                    title="Limitless: Infinity final video slides"
+                ></iframe>
+            </div>
+        </main>
+    </body>
+</html>
