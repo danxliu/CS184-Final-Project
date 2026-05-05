@@ -290,19 +290,18 @@
                     foundational system it relies on, called
                     <em>Repulsive Surfaces</em>, plus one focused graph-manifold
                     interpolation demo from the shell pipeline. We successfully
-                    implemented an algorithm that naturally untangles 3D meshes
-                    by simulating a repulsive force, tested it by unraveling
-                    shapes with 0 to 5 holes (genus 0 through 5), and used the
-                    same repulsive potential to drive a 30-frame
-                    sphere-through-tube sequence.
+                    implemented an algorithm that lowers tangent-point energy
+                    on 3D meshes, tested it on shapes with 0 to 5 holes (genus
+                    0 through 5), and used the same repulsive potential to drive
+                    a 30-frame sphere-through-tube sequence.
                 </p>
                 <div class="note">
                     Scope changed after the milestone: GPU acceleration (CUDA)
                     and the complete Repulsive Shells system became stretch
                     goals. We implemented enough of the shell/path machinery to
                     ship the ball-through-tube demo, but our strongest validated
-                    result is the Repulsive Surfaces "untying" pipeline and
-                    gallery.
+                    result is the Repulsive Surfaces energy-minimization
+                    pipeline and gallery.
                 </div>
             </section>
 
@@ -310,15 +309,15 @@
                 <h2>02: Technical Approach</h2>
 
                 <p>
-                    Our system naturally untangles 3D meshes by minimizing a
-                    specific "energy" metric that heavily penalizes parts of the
-                    surface that get too close to intersecting. Because
+                    Our system optimizes 3D meshes by minimizing a specific
+                    energy metric that heavily penalizes parts of the surface
+                    that get too close to intersecting. Because
                     calculating this repulsive force between every single pair
                     of triangles on a mesh is far too slow, we sped up the
                     process using hierarchical data structures to group distant
                     triangles together. Our final results show how messy or
-                    tangled starting shapes smoothly transform into neat,
-                    untangled final surfaces without requiring explicit
+                    high-energy starting shapes move toward embedded,
+                    low-energy final surfaces without requiring explicit
                     continuous collision detection.
                 </p>
                 <p>
@@ -333,7 +332,8 @@
                         geometric properties for each triangle face, such as its
                         center point, orientation (normal), and area. These
                         foundational properties are necessary to figure out
-                        exactly how the mesh should move to reduce its tangling.
+                        exactly how the mesh should move to reduce the
+                        objective.
                     </div>
                 </div>
                 <div class="step">
@@ -357,21 +357,19 @@
                         advanced mathematical techniques (specifically,
                         Sobolev-style preconditioning) to smartly guide the
                         shape's movement. This ensures the mesh flows smoothly
-                        and naturally into a lower-energy, untangled state over
-                        time.
+                        into a lower-energy embedded state over time.
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-label">4. Dynamic Remeshing</div>
                     <div class="step-body">
-                        As the surface stretches, untangles, and moves, the
+                        As the surface changes during energy minimization, the
                         triangles making up the mesh can become highly
                         distorted. To fix this, we dynamically "remesh" the
                         surface as it updates, automatically splitting edges
                         that get too long, collapsing ones that get too short,
                         and smoothing out the triangles. This keeps the 3D model
-                        clean, uniform, and stable throughout the entire
-                        unraveling process.
+                        clean, uniform, and stable throughout the optimization.
                     </div>
                 </div>
                 <div class="step">
