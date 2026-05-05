@@ -62,7 +62,7 @@
                 background: var(--bg);
                 color: var(--text);
                 line-height: 1.75;
-                font-size: 18.5px;
+                font-size: 12px;
                 font-weight: 400;
                 -webkit-font-smoothing: antialiased;
                 transition:
@@ -107,12 +107,13 @@
             }
 
             .hero {
-                min-height: 60vh;
+                min-height: 0;
                 display: flex;
                 flex-direction: column;
                 justify-content: center;
                 max-width: 860px;
                 margin: 0 auto;
+                margin-bottom: 1rem;
             }
             .hero-label {
                 font-size: 0.75rem;
@@ -122,7 +123,8 @@
                 margin-bottom: 1.5rem;
             }
             .hero h1 {
-                font-size: clamp(2.5rem, 7vw, 4.5rem);
+                /* font-size: clamp(2.5rem, 7vw, 4.5rem); */
+                font-size: 3rem;
                 line-height: 1.05;
                 font-weight: 400;
                 margin-bottom: 1rem;
@@ -151,7 +153,7 @@
                 padding: 0 2rem 6rem;
             }
             section {
-                margin-bottom: 3.5rem;
+                margin-bottom: 1rem;
             }
 
             .section-num {
@@ -162,9 +164,9 @@
                 margin-bottom: 0.5rem;
             }
             h2 {
-                font-size: 1.65rem;
+                font-size: 1.25rem;
                 font-weight: 400;
-                margin-bottom: 1.25rem;
+                margin-bottom: 0.25rem;
                 line-height: 1.2;
             }
             h3 {
@@ -236,7 +238,7 @@
                 padding-top: 0.1rem;
             }
             .week-content {
-                font-size: 0.97rem;
+                font-size: 12px;
                 color: var(--text-dim);
                 line-height: 1.65;
             }
@@ -262,11 +264,13 @@
                 font-size: 0.9rem;
             }
             ul {
-                margin: 0.4rem 0 1.2rem 1.2rem;
+                /* margin: 0.4rem 0 1.2rem 1.2rem; */
+                margin: 0.4rem 0 0.6rem 0.6rem;
                 color: var(--text-dim);
             }
             li {
-                margin-bottom: 0.35rem;
+                /* margin-bottom: 0.35rem; */
+                margin-bottom: 0.1rem;
             }
 
             @media (max-width: 640px) {
@@ -309,12 +313,12 @@
         <div class="hero">
             <div class="hero-label">CS 184 · Spring 2026 · Final Report</div>
             <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
-            <p class="hero-sub">
+            <!-- <p class="hero-sub">
                 A C++ implementation of the Repulsive Shells pipeline for
                 collision-free shape optimization, with Barnes-Hut acceleration,
                 Sobolev preconditioning, remeshing, and end-to-end demo/test
                 coverage on a CPU/OpenMP implementation.
-            </p>
+            </p> -->
             <div class="team">
                 <span
                     style="
@@ -560,7 +564,7 @@
                 <div>TODO: Add</div>
             </section>
 
-            <div class="divider"></div>
+            <!-- <div class="divider"></div> -->
 
             <section id="references">
                 <div class="section-num">04: References</div>
@@ -605,6 +609,25 @@
                     <li>
                         Nix/devenv tooling for reproducible local environment
                         setup
+                    </li>
+                </ul>
+            </section>
+
+            <!-- <div class="divider"></div> -->
+
+            <section id="contributions">
+                <div class="section-num">05: Contributions</div>
+                <h2>Member Contributions</h2>
+
+                <ul>
+                    <li>
+                        Atharv:
+                    </li>
+                    <li>
+                        Daniel: 
+                    </li>
+                    <li>
+                        Michael: Worked on initial setup to lay groundwork for rest of the project. Implemented mesh data structure alongside a brute-force implementation of discrete TPE and its gradient.
                     </li>
                 </ul>
             </section>
