@@ -249,7 +249,7 @@
     <body>
         <header class="hero">
             <div class="hero-label">CS 184 · Spring 2026 · Final Report</div>
-            <h1>Limitless: Infinity</h1>
+
             <p>
                 Repulsive-surface optimization for self-intersection-free
                 triangle meshes, implemented in C++/OpenMP with Barnes-Hut
@@ -274,8 +274,8 @@
 
         <main class="content">
             <section id="abstract">
-                <div class="section-num">01: Abstract</div>
-                <h2>Repulsive Surfaces as the completed result</h2>
+                <h2>01: Abstract</h2>
+
                 <p>
                     Our original proposal aimed to implement
                     <em>Repulsive Shells</em>, a recent 2024 paper about
@@ -290,22 +290,7 @@
                     repulsive force, and we tested it by unraveling shapes with
                     0 to 5 holes (genus 0 through 5).
                 </p>
-                <p>
-                    To make this work efficiently, our system minimizes a
-                    specific energy metric that heavily penalizes parts of the
-                    surface that get too close to intersecting. Because
-                    calculating this repulsive force between every single pair
-                    of triangles on a mesh is too slow, we sped up the process
-                    using hierarchical data structures (a Bounding Volume
-                    Hierarchy and a block-cluster tree) to group distant
-                    triangles together. We also used advanced mathematical
-                    techniques to guide the shape's movement smoothly over time
-                    and added dynamic remeshing (automatically adjusting the
-                    size and shape of the triangles as the surface stretches) to
-                    keep the 3D model clean and stable. Our final results show
-                    how messy or tangled starting shapes smoothly transform into
-                    neat, untangled final surfaces.
-                </p>
+
                 <div class="note">
                     Scope changed after the milestone: GPU acceleration (CUDA)
                     and the complete Repulsive Shells system became stretch
@@ -316,88 +301,92 @@
             </section>
 
             <section id="approach">
-                <div class="section-num">02: Technical Approach</div>
-                <h2>From exact TPE to a gallery optimizer</h2>
+                <h2>02: Technical Approach</h2>
+
                 <p>
-                    For a triangle mesh, we discretize tangent-point energy by
-                    midpoint quadrature over ordered pairs of distinct faces:
-                </p>
-                <div class="formula">
-                    Phi_hat(x) = sum_{t1 != t2} a1 a2 |dot(n1, c1 - c2)|^6 /
-                    ||c1 - c2||^12
-                </div>
-                <p>
-                    This potential grows when distant parts of the same surface
-                    approach intersection. Minimizing it therefore spreads a
-                    surface into an embedded low-energy shape without explicit
+                    Our system naturally untangles 3D meshes by minimizing a
+                    specific "energy" metric that heavily penalizes parts of the
+                    surface that get too close to intersecting. Because
+                    calculating this repulsive force between every single pair
+                    of triangles on a mesh is far too slow, we sped up the
+                    process using hierarchical data structures to group distant
+                    triangles together. Our final results show how messy or
+                    tangled starting shapes smoothly transform into neat,
+                    untangled final surfaces without requiring explicit
                     continuous collision detection.
                 </p>
-                <div class="formula">
-                    mesh -> face geometry -> TPE/BVH/BCT -> Hs-preconditioned
-                    direction -> line search -> remesh -> frame/energy logs
-                </div>
+                <p>
+                    To make this work efficiently and stably, our optimization
+                    pipeline follows four main steps:
+                </p>
 
                 <div class="step">
-                    <div class="step-label">Geometry</div>
+                    <div class="step-label">1. Geometry Processing</div>
                     <div class="step-body">
-                        We built mesh storage, OpenMesh conversion,
-                        normalization, procedural test meshes, and analytical
-                        face-geometry derivatives for centroids, normals, and
-                        areas. These derivatives are the basis for the TPE
-                        gradient, and every major gradient path was checked
-                        against central finite differences.
+                        We start by loading the 3D mesh and calculating basic
+                        geometric properties for each triangle face, such as its
+                        center point, orientation (normal), and area. These
+                        foundational properties are necessary to figure out
+                        exactly how the mesh should move to reduce its tangling.
                     </div>
                 </div>
                 <div class="step">
-                    <div class="step-label">Energy</div>
+                    <div class="step-label">2. Fast Energy Calculation</div>
                     <div class="step-body">
-                        We first implemented an exact O(n^2) TPE energy and
-                        gradient as an exact baseline, then added a Barnes-Hut
-                        approximation using a BVH and block-cluster tree. A
-                        major correction was switching the accelerated kernel to
-                        projector cluster aggregates and an AABB distance MAC;
-                        this removed a large energy underestimation on remeshed
-                        torus geometry.
+                        Instead of a slow calculation that checks every triangle
+                        against every other triangle (O(n²) complexity), we use
+                        a Barnes-Hut approximation paired with Bounding Volume
+                        Hierarchies (BVH) and block-cluster trees. This allows
+                        us to group distant parts of the surface together and
+                        estimate their repulsive forces, saving a massive amount
+                        of computation time while still preventing
+                        self-intersections.
                     </div>
                 </div>
                 <div class="step">
-                    <div class="step-label">Descent</div>
+                    <div class="step-label">3. Smooth Descent</div>
                     <div class="step-body">
-                        Plain L2 descent is strongly mesh-dependent, so we
-                        implemented a Sobolev-style preconditioned direction
-                        using cotangent Laplacians, a fractional high-order
-                        operator, and GMRES. During gallery descent we also
-                        remove global scale and barycenter modes.
+                        Simply moving the mesh's vertices based on basic forces
+                        can lead to jagged, unstable shapes. To fix this, we use
+                        advanced mathematical techniques (specifically,
+                        Sobolev-style preconditioning) to smartly guide the
+                        shape's movement. This ensures the mesh flows smoothly
+                        and naturally into a lower-energy, untangled state over
+                        time.
                     </div>
                 </div>
                 <div class="step">
-                    <div class="step-label">Remeshing</div>
+                    <div class="step-label">4. Dynamic Remeshing</div>
                     <div class="step-body">
-                        Connectivity must adapt as the shape moves. Our
-                        remeshing pass performs edge splits/collapses, flips,
-                        and smoothing, while preserving the initial target edge
-                        length and enforcing a face-count budget. The final
-                        higher-genus runs stayed close to a 1.15x face-count
-                        ratio after 500 iterations.
+                        As the surface stretches, untangles, and moves, the
+                        triangles making up the mesh can become highly
+                        distorted. To fix this, we dynamically "remesh" the
+                        surface as it updates, automatically splitting edges
+                        that get too long, collapsing ones that get too short,
+                        and smoothing out the triangles. This keeps the 3D model
+                        clean, uniform, and stable throughout the entire
+                        unraveling process.
                     </div>
                 </div>
                 <h3>Lessons learned</h3>
                 <p>
-                    The largest failures were not syntax bugs; they were
-                    numerical modeling mistakes. A cluster aggregate that passed
-                    small tests gave a biased energy on irregular near-contact
-                    meshes. OpenMP summation order changed optimizer
-                    trajectories enough to produce visibly different surfaces.
-                    Remeshing changed the effective resolution target until we
-                    preserved the initial edge length. The practical lesson is
-                    that research graphics code needs exact baselines and strict
-                    regression tests around anything that changes the objective.
+                    One of our biggest takeaways was underestimating the compute
+                    power required to iterate quickly; slow optimization runs
+                    made debugging and resolving issues a major bottleneck.
+                    Additionally, our main challenges were subtle numerical
+                    modeling mistakes rather than syntax bugs, such as biased
+                    energy aggregates, OpenMP summation non-determinism changing
+                    optimizer paths, and remeshing altering resolution targets.
+                    Ultimately, we learned that research graphics code requires
+                    not only sufficient compute for rapid testing, but also
+                    exact baselines and strict regression tests around anything
+                    that changes the objective.
                 </p>
             </section>
 
             <section id="results">
-                <div class="section-num">03: Results</div>
-                <h2>Genus 0-5 canonical embedding gallery</h2>
+                <h2>03: Results</h2>
+
                 <p>
                     We ran six gallery optimizations with
                     <code>OMP_NUM_THREADS=4</code>, 500 iterations, dynamic
@@ -565,8 +554,8 @@
             </section>
 
             <section id="references">
-                <div class="section-num">04: References</div>
-                <h2>Papers, code, and tools</h2>
+                <h2>04: References</h2>
+
                 <ul>
                     <li>
                         Yu, Brakensiek, Schumacher, Crane (2021).
@@ -575,28 +564,6 @@
                     <li>
                         Sassen, Schumacher, Rumpf, Crane (2024).
                         <em>Repulsive Shells</em>. ACM SIGGRAPH.
-                    </li>
-                    <li>
-                        Strzelecki and von der Mosel (2013).
-                        <em
-                            >Tangent-point repulsive potentials for a class of
-                            non-smooth sets</em
-                        >.
-                    </li>
-                    <li>
-                        Meyer, Desbrun, Schroder, Barr (2003).
-                        <em
-                            >Discrete Differential-Geometry Operators for
-                            Triangulated 2-Manifolds</em
-                        >.
-                    </li>
-                    <li>
-                        Grinspun, Hirani, Desbrun, Schroder (2003).
-                        <em>Discrete Shells</em>.
-                    </li>
-                    <li>
-                        Heeren, Rumpf, Wardetzky, Wirth (2012).
-                        <em>Time-Discrete Geodesics in the Space of Shells</em>.
                     </li>
                     <li>
                         Henrik Schumacher's Repulsor reference implementation,
@@ -610,8 +577,8 @@
             </section>
 
             <section id="contributions">
-                <div class="section-num">06: Contributions</div>
-                <h2>Member contributions</h2>
+                <h2>05: Contributions</h2>
+
                 <ul>
                     <li>
                         <strong>Atharv Sampath:</strong> Project scoping,
