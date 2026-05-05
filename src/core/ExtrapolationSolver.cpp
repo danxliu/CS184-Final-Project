@@ -44,6 +44,17 @@ void unpack_mesh(const Eigen::VectorXd &x, MeshData &m) {
     }
 }
 
+std::pair<double, Eigen::MatrixXd> graph_phi_and_gradient(
+    const MeshData &m,
+    const PathEnergyParams &params) {
+    const std::vector<MeshData> frames = {m};
+    const std::vector<PathEnergyFrameCache> cache =
+        build_path_energy_frame_cache(frames, params);
+    const PathEnergyGradientResult pr =
+        path_energy_with_gradient(frames, params, &cache);
+    return {pr.energy.phi_per_frame[0], pr.grad_phi_per_frame[0]};
+}
+
 Eigen::VectorXd compute_f(
     const MeshData &x_km1,
     const MeshData &x_k,
@@ -60,42 +71,18 @@ Eigen::VectorXd compute_f(
     // We need dE/dx_k. E = n * (W(x_km1, x_k) + W(x_k, x_kp1) + (phi_km1 - phi_k)^2 + (phi_k - phi_kp1)^2)
     // dE/dx_k = n * (dW(x_km1, x_k)/dx_k + dW(x_k, x_kp1)/dx_k + 2(phi_km1 - phi_k)(-dphi_k/dx_k) + 2(phi_k - phi_kp1)(dphi_k/dx_k))
     
-    const PathEnergyFrameCache cache_km1 = build_path_energy_frame_cache({x_km1}, params)[0];
-    const PathEnergyFrameCache cache_k = build_path_energy_frame_cache({x_k}, params)[0];
-    const PathEnergyFrameCache cache_kp1 = build_path_energy_frame_cache({x_kp1}, params)[0];
-    
-    auto get_phi_grad = [&](const MeshData &m, const PathEnergyFrameCache &c) {
-        FaceGeom g = compute_face_geom(m);
-        BVH bvh = c.bvh;
-        update_bvh_aggregates(bvh, g);
-        double phi = 0.0;
-        Eigen::MatrixXd grad;
-        if (params.tpe_adaptive.enabled) {
-            phi = tpe_energy_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
-            grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_adaptive, params.tpe_alpha, &c.adaptive_cache);
-        } else {
-            phi = tpe_energy_bh(g, bvh, c.bp, params.tpe_alpha);
-            grad = tpe_gradient_bh(m, g, bvh, c.bp, params.tpe_alpha);
-        }
-        if (params.obstacle != nullptr) {
-            phi += params.obstacle_weight *
-                   obstacle_energy(m, *params.obstacle);
-            grad += params.obstacle_weight *
-                    obstacle_gradient(m, *params.obstacle);
-        }
-        return std::make_pair(phi, grad);
-    };
-    
-    auto res_km1 = get_phi_grad(x_km1, cache_km1);
-    auto res_k = get_phi_grad(x_k, cache_k);
-    auto res_kp1 = get_phi_grad(x_kp1, cache_kp1);
+    auto res_km1 = graph_phi_and_gradient(x_km1, params);
+    auto res_k = graph_phi_and_gradient(x_k, params);
+    auto res_kp1 = graph_phi_and_gradient(x_kp1, params);
     
     ShellEnergyGradientResult sw_12 = shell_energy_with_gradient(x_km1, x_k, params.shell);
     ShellEnergyGradientResult sw_23 = shell_energy_with_gradient(x_k, x_kp1, params.shell);
     
     out_energy = scale * (sw_12.energy.total + sw_23.energy.total +
-                         std::pow(res_km1.first - res_k.first, 2.0) +
-                         std::pow(res_k.first - res_kp1.first, 2.0));
+                         params.graph_beta *
+                             std::pow(res_km1.first - res_k.first, 2.0) +
+                         params.graph_beta *
+                             std::pow(res_k.first - res_kp1.first, 2.0));
 
     const int nv = x_k.n_vertices();
     Eigen::MatrixXd grad_k = sw_12.grad_def + sw_23.grad_ref;
@@ -103,8 +90,8 @@ Eigen::VectorXd compute_f(
     double dphi_12 = res_km1.first - res_k.first;
     double dphi_23 = res_k.first - res_kp1.first;
 
-    grad_k += 2.0 * dphi_12 * (-res_k.second);
-    grad_k += 2.0 * dphi_23 * (res_k.second);
+    grad_k += params.graph_beta * 2.0 * dphi_12 * (-res_k.second);
+    grad_k += params.graph_beta * 2.0 * dphi_23 * (res_k.second);
 
     Eigen::VectorXd f(nv * 3);
     for (int i = 0; i < nv; ++i) {
@@ -140,32 +127,9 @@ struct JacobianOperator : public Eigen::EigenBase<JacobianOperator> {
                      const PathEnergyParams& params, const ExtrapolationParams& ext_params)
         : x_km1(x_km1), x_k(x_k), x_kp1(x_kp1), params(params), ext_params(ext_params) {
         
-        auto get_phi_grad = [&](const MeshData &m) {
-            FaceGeom g = compute_face_geom(m);
-            BVH bvh = build_bvh(m, g);
-            BlockPairs bp = build_bct_self(bvh, params.tpe_theta);
-            double phi = 0.0;
-            Eigen::MatrixXd grad;
-            if (params.tpe_adaptive.enabled) {
-                auto cache = build_tpe_adaptive_cache(m, g, bvh, bp, params.tpe_adaptive);
-                phi = tpe_energy_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
-                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
-            } else {
-                phi = tpe_energy_bh(g, bvh, bp, params.tpe_alpha);
-                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
-            }
-            if (params.obstacle != nullptr) {
-                phi += params.obstacle_weight *
-                       obstacle_energy(m, *params.obstacle);
-                grad += params.obstacle_weight *
-                        obstacle_gradient(m, *params.obstacle);
-            }
-            return std::make_pair(phi, grad);
-        };
-        
-        auto res_km1 = get_phi_grad(x_km1);
-        auto res_k = get_phi_grad(x_k);
-        auto res_kp1 = get_phi_grad(x_kp1);
+        auto res_km1 = graph_phi_and_gradient(x_km1, params);
+        auto res_k = graph_phi_and_gradient(x_k, params);
+        auto res_kp1 = graph_phi_and_gradient(x_kp1, params);
         
         phi_km1 = res_km1.first;
         phi_k = res_k.first;
@@ -231,29 +195,15 @@ struct JacobianOperator : public Eigen::EigenBase<JacobianOperator> {
         // For Jacobian check, we also need grad_phi_kp1.
         // I should have computed it in constructor.
         
-        auto get_phi_grad_simple = [&](const MeshData &m) {
-            FaceGeom g = compute_face_geom(m);
-            BVH bvh = build_bvh(m, g);
-            BlockPairs bp = build_bct_self(bvh, params.tpe_theta);
-            Eigen::MatrixXd grad;
-            if (params.tpe_adaptive.enabled) {
-                auto cache = build_tpe_adaptive_cache(m, g, bvh, bp, params.tpe_adaptive);
-                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_adaptive, params.tpe_alpha, &cache);
-            } else {
-                grad = tpe_gradient_bh(m, g, bvh, bp, params.tpe_alpha);
-            }
-            if (params.obstacle != nullptr) {
-                grad += params.obstacle_weight *
-                        obstacle_gradient(m, *params.obstacle);
-            }
-            return grad;
-        };
-        Eigen::MatrixXd gp_kp1_mat = get_phi_grad_simple(x_kp1);
+        Eigen::MatrixXd gp_kp1_mat =
+            graph_phi_and_gradient(x_kp1, params).second;
         Eigen::VectorXd g_phi_kp1(v.size());
         for(int i=0; i<x_k.n_vertices(); ++i) g_phi_kp1.segment<3>(3*i) = gp_kp1_mat.row(i).transpose();
 
         double dot_val = g_phi_kp1.dot(v);
-        Eigen::VectorXd Jv = Hxy_v - 2.0 * n_val * grad_phi_k * dot_val;
+        Eigen::VectorXd Jv =
+            Hxy_v -
+            params.graph_beta * 2.0 * n_val * grad_phi_k * dot_val;
         
         return Jv;
     }

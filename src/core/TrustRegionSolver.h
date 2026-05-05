@@ -28,7 +28,26 @@ struct TrustRegionParams {
     double initial_radius = 1e-2;
     double max_radius = 1.0;
     double accept_eta = 0.1;
-    double hvp_eps = 1e-5;
+    int max_step_backtracks = 8;
+    double step_backtrack_shrink = 0.5;
+    // RS Section 6.1 uses the Gauss-Newton graph Hessian near a minimizer.
+    // When the graph residual is still large, include the omitted residual
+    // Hessian term by finite-differencing dPhi in HVPs. This is slower but
+    // matches the discrete objective more closely during diagnostics.
+    bool use_graph_residual_hessian = false;
+    double graph_residual_hvp_fd_eps = 1e-6;
+    // Use a freshly rebuilt hierarchy/adaptive quadrature for actual trial
+    // acceptance. The local model still freezes partitions for derivatives,
+    // but large steps can otherwise miss newly singular near-contact terms.
+    bool use_rebuilt_acceptance_energy = true;
+    bool use_block_diagonal_preconditioner = true;
+    int block_preconditioner_max_block_dofs = 1200;
+    double block_preconditioner_regularization = 1e-6;
+    // Lift the elastic shell Hessian's rigid-motion nullspace. If this floor
+    // is too small, the block preconditioner over-amplifies whole-frame rigid
+    // translations and the ball-through-tube solve prefers temporal jumps over
+    // shell deformation.
+    double block_preconditioner_regularization_floor = 1e-3;
     std::vector<bool> free_vertices;
     bool optimize_end_frame = false;
     std::function<void(const TrustRegionIterationInfo &,

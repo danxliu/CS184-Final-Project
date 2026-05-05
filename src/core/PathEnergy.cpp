@@ -56,64 +56,103 @@ std::vector<FrameEval> build_frame_eval(
                   << " for frame " << k+1 << " of " << frames.size() << "..." << std::flush;
         FrameEval &fe = out[k];
         fe.g = compute_face_geom(frames[k]);
-        if (frame_cache != nullptr) {
-            const PathEnergyFrameCache &fc = frame_cache->at(k);
-            fe.bvh = fc.bvh;
-            update_bvh_aggregates(fe.bvh, fe.g);
-            fe.bp = fc.bp;
-            fe.cache = fc.adaptive_cache;
-            if (params.tpe_adaptive.enabled && fc.has_adaptive) {
-                fe.tpe_phi = tpe_energy_bh(
-                    frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
-                    params.tpe_alpha, &fe.cache);
-                if (with_gradient) {
-                    fe.grad_phi = tpe_gradient_bh(
+        if (with_gradient) {
+            fe.grad_phi =
+                Eigen::MatrixXd::Zero(frames[k].n_vertices(), 3);
+        }
+        if (params.self_tpe_weight != 0.0) {
+            Eigen::MatrixXd grad_tpe;
+            if (frame_cache != nullptr) {
+                const PathEnergyFrameCache &fc = frame_cache->at(k);
+                fe.bvh = fc.bvh;
+                update_bvh_aggregates(fe.bvh, fe.g);
+                fe.bp = fc.bp;
+                fe.cache = fc.adaptive_cache;
+                if (params.tpe_adaptive.enabled && fc.has_adaptive) {
+                    fe.tpe_phi = tpe_energy_bh(
                         frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
                         params.tpe_alpha, &fe.cache);
+                    if (with_gradient) {
+                        grad_tpe = tpe_gradient_bh(
+                            frames[k], fe.g, fe.bvh, fe.bp,
+                            params.tpe_adaptive, params.tpe_alpha,
+                            &fe.cache);
+                    }
+                } else {
+                    fe.tpe_phi =
+                        tpe_energy_bh(fe.g, fe.bvh, fe.bp,
+                                      params.tpe_alpha);
+                    if (with_gradient) {
+                        grad_tpe = tpe_gradient_bh(
+                            frames[k], fe.g, fe.bvh, fe.bp,
+                            params.tpe_alpha);
+                    }
                 }
             } else {
-                fe.tpe_phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
-                if (with_gradient) {
-                    fe.grad_phi = tpe_gradient_bh(
-                        frames[k], fe.g, fe.bvh, fe.bp, params.tpe_alpha);
+                fe.bvh = build_bvh(frames[k], fe.g);
+                fe.bp = build_bct_self(fe.bvh, params.tpe_theta);
+                if (params.tpe_adaptive.enabled) {
+                    fe.cache = build_tpe_adaptive_cache(
+                        frames[k], fe.g, fe.bvh, fe.bp,
+                        params.tpe_adaptive);
+                    fe.tpe_phi = tpe_energy_bh(
+                        frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
+                        params.tpe_alpha, &fe.cache);
+                    if (with_gradient) {
+                        grad_tpe = tpe_gradient_bh(
+                            frames[k], fe.g, fe.bvh, fe.bp,
+                            params.tpe_adaptive, params.tpe_alpha,
+                            &fe.cache);
+                    }
+                } else {
+                    fe.tpe_phi =
+                        tpe_energy_bh(fe.g, fe.bvh, fe.bp,
+                                      params.tpe_alpha);
+                    if (with_gradient) {
+                        grad_tpe = tpe_gradient_bh(
+                            frames[k], fe.g, fe.bvh, fe.bp,
+                            params.tpe_alpha);
+                    }
                 }
             }
-        } else {
-            fe.bvh = build_bvh(frames[k], fe.g);
-            fe.bp = build_bct_self(fe.bvh, params.tpe_theta);
-            if (params.tpe_adaptive.enabled) {
-                fe.cache = build_tpe_adaptive_cache(
-                    frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive);
-                fe.tpe_phi = tpe_energy_bh(
-                    frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
-                    params.tpe_alpha, &fe.cache);
-                if (with_gradient) {
-                    fe.grad_phi = tpe_gradient_bh(
-                        frames[k], fe.g, fe.bvh, fe.bp, params.tpe_adaptive,
-                        params.tpe_alpha, &fe.cache);
-                }
-            } else {
-                fe.tpe_phi = tpe_energy_bh(fe.g, fe.bvh, fe.bp, params.tpe_alpha);
-                if (with_gradient) {
-                    fe.grad_phi = tpe_gradient_bh(
-                        frames[k], fe.g, fe.bvh, fe.bp, params.tpe_alpha);
-                }
+            fe.phi += params.self_tpe_weight * fe.tpe_phi;
+            if (with_gradient) {
+                fe.grad_phi += params.self_tpe_weight * grad_tpe;
             }
         }
-        fe.phi = fe.tpe_phi;
-        if (params.tpe_barrier_mesh != nullptr) {
-            const double barrier_phi = surface_tpe_barrier_energy(
-                frames[k], *params.tpe_barrier_mesh, params.tpe_alpha);
+        if (params.tpe_barrier_mesh != nullptr &&
+            params.tpe_barrier_weight != 0.0) {
+            const bool use_barrier_cache =
+                frame_cache != nullptr &&
+                frame_cache->at(k).has_barrier_cache;
+            const SurfaceBarrierCache *barrier_cache =
+                use_barrier_cache ? &frame_cache->at(k).barrier_cache
+                                  : nullptr;
+            const double barrier_phi =
+                (barrier_cache != nullptr)
+                    ? surface_tpe_barrier_energy_bh(
+                          frames[k], *params.tpe_barrier_mesh,
+                          *barrier_cache, params.tpe_alpha)
+                    : surface_tpe_barrier_energy_bh(
+                          frames[k], *params.tpe_barrier_mesh,
+                          params.tpe_adaptive,
+                          params.tpe_alpha, params.tpe_theta);
             fe.obstacle_phi += barrier_phi;
             fe.phi += params.tpe_barrier_weight * barrier_phi;
             if (with_gradient) {
-                fe.grad_phi += params.tpe_barrier_weight *
-                               surface_tpe_barrier_gradient(
-                                   frames[k], *params.tpe_barrier_mesh,
-                                   params.tpe_alpha);
+                fe.grad_phi +=
+                    params.tpe_barrier_weight *
+                    ((barrier_cache != nullptr)
+                         ? surface_tpe_barrier_gradient_bh(
+                               frames[k], *params.tpe_barrier_mesh,
+                               *barrier_cache, params.tpe_alpha)
+                         : surface_tpe_barrier_gradient_bh(
+                               frames[k], *params.tpe_barrier_mesh,
+                               params.tpe_adaptive,
+                               params.tpe_alpha, params.tpe_theta));
             }
         }
-        if (params.obstacle != nullptr) {
+        if (params.obstacle != nullptr && params.obstacle_weight != 0.0) {
             const double sdf_phi = obstacle_energy(frames[k], *params.obstacle);
             fe.obstacle_phi += sdf_phi;
             fe.phi += params.obstacle_weight * sdf_phi;
@@ -129,6 +168,65 @@ std::vector<FrameEval> build_frame_eval(
     return out;
 }
 
+Eigen::Vector3d barycenter(const MeshData &mesh) {
+    return mesh.V.colwise().mean().transpose();
+}
+
+double rigid_segment_energy(const MeshData &prev,
+                            const MeshData &next,
+                            const PathEnergyParams &params) {
+    double e = 0.0;
+    if (params.rigid_translation_weight > 0.0) {
+        const Eigen::Vector3d dc = barycenter(next) - barycenter(prev);
+        e += params.rigid_translation_weight * dc.squaredNorm();
+    }
+    if (params.rigid_rotation_weight > 0.0) {
+        double rot = 0.0;
+        for (int i = 0; i < prev.n_vertices(); ++i) {
+            const Eigen::Vector3d a = prev.V.row(i).transpose();
+            const Eigen::Vector3d b = next.V.row(i).transpose();
+            rot += b.cross(a).squaredNorm();
+        }
+        e += params.rigid_rotation_weight * rot;
+    }
+    return e;
+}
+
+void add_rigid_segment_gradient(const MeshData &prev,
+                                const MeshData &next,
+                                const PathEnergyParams &params,
+                                double scale,
+                                Eigen::MatrixXd &grad_prev,
+                                Eigen::MatrixXd &grad_next) {
+    const int nv = prev.n_vertices();
+    if (params.rigid_translation_weight > 0.0) {
+        const Eigen::Vector3d dc = barycenter(next) - barycenter(prev);
+        const Eigen::RowVector3d g_next =
+            (scale * params.rigid_translation_weight * 2.0 /
+             static_cast<double>(nv)) *
+            dc.transpose();
+        for (int i = 0; i < nv; ++i) {
+            grad_next.row(i) += g_next;
+            grad_prev.row(i) -= g_next;
+        }
+    }
+
+    if (params.rigid_rotation_weight > 0.0) {
+        const double w = scale * params.rigid_rotation_weight;
+        for (int i = 0; i < nv; ++i) {
+            const Eigen::Vector3d a = prev.V.row(i).transpose();
+            const Eigen::Vector3d b = next.V.row(i).transpose();
+            const double aa = a.squaredNorm();
+            const double bb = b.squaredNorm();
+            const double ab = a.dot(b);
+            const Eigen::Vector3d ga = 2.0 * w * (bb * a - ab * b);
+            const Eigen::Vector3d gb = 2.0 * w * (aa * b - ab * a);
+            grad_prev.row(i) += ga.transpose();
+            grad_next.row(i) += gb.transpose();
+        }
+    }
+}
+
 } // namespace
 
 std::vector<PathEnergyFrameCache> build_path_energy_frame_cache(
@@ -136,16 +234,32 @@ std::vector<PathEnergyFrameCache> build_path_energy_frame_cache(
     const PathEnergyParams &params) {
     validate_frames(frames);
     std::vector<PathEnergyFrameCache> out(frames.size());
+    const bool need_self_tpe = params.self_tpe_weight != 0.0;
+    const bool need_barrier =
+        params.tpe_barrier_mesh != nullptr &&
+        params.tpe_barrier_weight != 0.0;
+    if (!need_self_tpe && !need_barrier) {
+        return out;
+    }
     for (size_t k = 0; k < frames.size(); ++k) {
         auto start_time = std::chrono::high_resolution_clock::now();
         std::cout << "[PathEnergy] Building cache for frame " << k+1 << " of " << frames.size() << "..." << std::flush;
         const FaceGeom g = compute_face_geom(frames[k]);
-        out[k].bvh = build_bvh(frames[k], g);
-        out[k].bp = build_bct_self(out[k].bvh, params.tpe_theta);
-        if (params.tpe_adaptive.enabled) {
-            out[k].adaptive_cache = build_tpe_adaptive_cache(
-                frames[k], g, out[k].bvh, out[k].bp, params.tpe_adaptive);
-            out[k].has_adaptive = true;
+        if (need_self_tpe) {
+            out[k].bvh = build_bvh(frames[k], g);
+            out[k].bp = build_bct_self(out[k].bvh, params.tpe_theta);
+            if (params.tpe_adaptive.enabled) {
+                out[k].adaptive_cache = build_tpe_adaptive_cache(
+                    frames[k], g, out[k].bvh, out[k].bp,
+                    params.tpe_adaptive);
+                out[k].has_adaptive = true;
+            }
+        }
+        if (need_barrier) {
+            out[k].barrier_cache = build_surface_tpe_barrier_cache(
+                frames[k], *params.tpe_barrier_mesh, params.tpe_theta,
+                params.tpe_adaptive);
+            out[k].has_barrier_cache = true;
         }
         auto end_time = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff = end_time - start_time;
@@ -183,10 +297,14 @@ PathEnergyResult path_energy(const std::vector<MeshData> &frames,
                              frames[static_cast<size_t>(k)], params.shell);
             const double dphi = fe[static_cast<size_t>(k - 1)].phi - fe[static_cast<size_t>(k)].phi;
             out.terms.shell_sum += w.total;
-            out.terms.repulsive_sum += dphi * dphi;
+            out.terms.repulsive_sum += params.graph_beta * dphi * dphi;
+            out.terms.rigid_sum += rigid_segment_energy(
+                frames[static_cast<size_t>(k - 1)],
+                frames[static_cast<size_t>(k)], params);
         }
         out.terms.total = scale *
-            (out.terms.shell_sum + out.terms.repulsive_sum);
+            (out.terms.shell_sum + out.terms.repulsive_sum +
+             out.terms.rigid_sum);
     }
     return out;
 }
@@ -233,16 +351,29 @@ PathEnergyGradientResult path_energy_with_gradient(
             out.grad_frames[static_cast<size_t>(k)] += scale * sw.grad_def;
 
             const double dphi = fe[static_cast<size_t>(km1)].phi - fe[static_cast<size_t>(k)].phi;
-            out.energy.terms.repulsive_sum += dphi * dphi;
+            out.energy.terms.repulsive_sum +=
+                params.graph_beta * dphi * dphi;
             out.grad_frames[static_cast<size_t>(km1)] +=
-                scale * (2.0 * dphi) * fe[static_cast<size_t>(km1)].grad_phi;
+                scale * params.graph_beta * (2.0 * dphi) *
+                fe[static_cast<size_t>(km1)].grad_phi;
             out.grad_frames[static_cast<size_t>(k)] +=
-                scale * (-2.0 * dphi) * fe[static_cast<size_t>(k)].grad_phi;
+                scale * params.graph_beta * (-2.0 * dphi) *
+                fe[static_cast<size_t>(k)].grad_phi;
+
+            out.energy.terms.rigid_sum += rigid_segment_energy(
+                frames[static_cast<size_t>(km1)],
+                frames[static_cast<size_t>(k)], params);
+            add_rigid_segment_gradient(
+                frames[static_cast<size_t>(km1)],
+                frames[static_cast<size_t>(k)], params, scale,
+                out.grad_frames[static_cast<size_t>(km1)],
+                out.grad_frames[static_cast<size_t>(k)]);
         }
 
         out.energy.terms.total = scale *
             (out.energy.terms.shell_sum +
-             out.energy.terms.repulsive_sum);
+             out.energy.terms.repulsive_sum +
+             out.energy.terms.rigid_sum);
     }
     return out;
 }

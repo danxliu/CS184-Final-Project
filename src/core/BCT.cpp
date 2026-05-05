@@ -71,11 +71,53 @@ void visit(const BVH &bvh, int u, int v, double theta, BlockPairs &out) {
     }
 }
 
+void visit_cross(const BVH &left,
+                 const BVH &right,
+                 int u,
+                 int v,
+                 double theta,
+                 BlockPairs &out) {
+    const BVHNode &U = left.nodes[u];
+    const BVHNode &V = right.nodes[v];
+
+    if (mac_admissible(U, V, theta)) {
+        out.admissible.push_back({u, v});
+        return;
+    }
+
+    if (U.is_leaf() && V.is_leaf()) {
+        out.near_field.push_back({u, v});
+        return;
+    }
+
+    if (U.is_leaf()) {
+        visit_cross(left, right, u, V.left, theta, out);
+        visit_cross(left, right, u, V.right, theta, out);
+    } else if (V.is_leaf()) {
+        visit_cross(left, right, U.left, v, theta, out);
+        visit_cross(left, right, U.right, v, theta, out);
+    } else {
+        visit_cross(left, right, U.left, V.left, theta, out);
+        visit_cross(left, right, U.left, V.right, theta, out);
+        visit_cross(left, right, U.right, V.left, theta, out);
+        visit_cross(left, right, U.right, V.right, theta, out);
+    }
+}
+
 } // anonymous namespace
 
 BlockPairs build_bct_self(const BVH &bvh, double theta) {
     BlockPairs out;
     visit(bvh, bvh.root, bvh.root, theta, out);
+    return out;
+}
+
+BlockPairs build_bct_cross(const BVH &left, const BVH &right, double theta) {
+    BlockPairs out;
+    if (left.nodes.empty() || right.nodes.empty()) {
+        return out;
+    }
+    visit_cross(left, right, left.root, right.root, theta, out);
     return out;
 }
 

@@ -1356,6 +1356,213 @@ void test_shell_energy_gradient_fd_deformed_mesh() {
     check(r.pass(5e-3), "shell energy gradient FD-check passes (rel < 5e-3)");
 }
 
+void test_shell_def_gradient_helper_matches_full_gradient() {
+    std::cout << "-- shell def-gradient helper matches full gradient --\n";
+    MeshData x = make_icosphere(1);
+    x.normalize();
+    MeshData y = x;
+    y.V.col(0) *= 1.08;
+    y.V.col(1) *= 0.94;
+    y.V.col(2) *= 1.03;
+
+    ShellEnergyParams params;
+    const ShellEnergyGradientResult full =
+        shell_energy_with_gradient(x, y, params);
+    const Eigen::MatrixXd def_only =
+        shell_energy_def_gradient(x, y, params);
+    const double max_err = (full.grad_def - def_only).cwiseAbs().maxCoeff();
+    std::cout << "    max |full.grad_def - def_only| = "
+              << max_err << "\n";
+    check(max_err < 1e-12,
+          "shell_energy_def_gradient matches full grad_def");
+}
+
+Eigen::VectorXd pack_vertex_matrix(const Eigen::MatrixXd &m) {
+    Eigen::VectorXd out(3 * m.rows());
+    for (int i = 0; i < m.rows(); ++i) {
+        out.segment<3>(3 * i) = m.row(i).transpose();
+    }
+    return out;
+}
+
+double sparse_max_abs(const Eigen::SparseMatrix<double> &m) {
+    double out = 0.0;
+    for (int outer = 0; outer < m.outerSize(); ++outer) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(m, outer); it;
+             ++it) {
+            out = std::max(out, std::abs(it.value()));
+        }
+    }
+    return out;
+}
+
+void test_shell_hessian_symmetry() {
+    std::cout << "-- analytical shell Hessian block symmetry --\n";
+    MeshData x = make_icosphere(1);
+    x.normalize();
+    MeshData y = x;
+    y.V.col(0) *= 1.07;
+    y.V.col(1) *= 0.93;
+    y.V.col(2) *= 1.02;
+
+    const ShellEnergyParams params{};
+    const ShellEnergyHessianResult H = shell_energy_hessian(x, y, params);
+    Eigen::SparseMatrix<double> rr_t = H.ref_ref.transpose();
+    Eigen::SparseMatrix<double> dd_t = H.def_def.transpose();
+    Eigen::SparseMatrix<double> dr_t = H.def_ref.transpose();
+    Eigen::SparseMatrix<double> rr_diff = H.ref_ref - rr_t;
+    Eigen::SparseMatrix<double> dd_diff = H.def_def - dd_t;
+    Eigen::SparseMatrix<double> rd_diff = H.ref_def - dr_t;
+    rr_diff.makeCompressed();
+    dd_diff.makeCompressed();
+    rd_diff.makeCompressed();
+
+    const double rr = sparse_max_abs(rr_diff);
+    const double dd = sparse_max_abs(dd_diff);
+    const double rd = sparse_max_abs(rd_diff);
+    std::cout << "    max |Hrr-Hrr^T| = " << rr
+              << ", max |Hdd-Hdd^T| = " << dd
+              << ", max |Hrd-Hdr^T| = " << rd << "\n";
+    check(std::max({rr, dd, rd}) < 1e-10,
+          "shell Hessian blocks have transpose symmetry");
+}
+
+void test_shell_hessian_directional_derivative() {
+    std::cout << "-- analytical shell Hessian directional derivative --\n";
+    MeshData x = make_icosphere(1);
+    x.normalize();
+    MeshData y = x;
+    y.V.col(0) *= 1.08;
+    y.V.col(1) *= 0.94;
+    y.V.col(2) *= 1.03;
+
+    std::mt19937 rng(18432);
+    std::normal_distribution<double> n(0.0, 1.0);
+    Eigen::MatrixXd dx = Eigen::MatrixXd::Zero(x.n_vertices(), 3);
+    Eigen::MatrixXd dy = Eigen::MatrixXd::Zero(y.n_vertices(), 3);
+    for (int i = 0; i < x.n_vertices(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            dx(i, c) = n(rng);
+            dy(i, c) = n(rng);
+        }
+    }
+    const double dir_norm =
+        std::sqrt(dx.squaredNorm() + dy.squaredNorm());
+    dx /= dir_norm;
+    dy /= dir_norm;
+
+    const ShellEnergyParams params{};
+    const ShellEnergyHessianResult H = shell_energy_hessian(x, y, params);
+    const Eigen::VectorXd vx = pack_vertex_matrix(dx);
+    const Eigen::VectorXd vy = pack_vertex_matrix(dy);
+    const Eigen::VectorXd hx = H.ref_ref * vx + H.ref_def * vy;
+    const Eigen::VectorXd hy = H.def_ref * vx + H.def_def * vy;
+
+    const double h = 1e-6;
+    MeshData xp = x;
+    MeshData xm = x;
+    MeshData yp = y;
+    MeshData ym = y;
+    xp.V += h * dx;
+    xm.V -= h * dx;
+    yp.V += h * dy;
+    ym.V -= h * dy;
+    const ShellEnergyGradientResult gp =
+        shell_energy_with_gradient(xp, yp, params);
+    const ShellEnergyGradientResult gm =
+        shell_energy_with_gradient(xm, ym, params);
+    const Eigen::VectorXd fd_x =
+        (pack_vertex_matrix(gp.grad_ref) -
+         pack_vertex_matrix(gm.grad_ref)) / (2.0 * h);
+    const Eigen::VectorXd fd_y =
+        (pack_vertex_matrix(gp.grad_def) -
+         pack_vertex_matrix(gm.grad_def)) / (2.0 * h);
+
+    const double err =
+        std::max((hx - fd_x).lpNorm<Eigen::Infinity>(),
+                 (hy - fd_y).lpNorm<Eigen::Infinity>());
+    const double scale =
+        std::max({1.0,
+                  hx.lpNorm<Eigen::Infinity>(),
+                  hy.lpNorm<Eigen::Infinity>(),
+                  fd_x.lpNorm<Eigen::Infinity>(),
+                  fd_y.lpNorm<Eigen::Infinity>()});
+    const double rel = err / scale;
+    std::cout << "    max abs err = " << err
+              << ", max rel err = " << rel << "\n";
+    check(rel < 5e-5,
+          "shell Hessian matches FD directional derivative");
+}
+
+void test_bending_hessian_directional_derivative() {
+    std::cout << "-- closed-form bending Hessian directional derivative --\n";
+    MeshData x = make_icosphere(1);
+    x.normalize();
+    MeshData y = x;
+    y.V.col(0) *= 1.08;
+    y.V.col(1) *= 0.94;
+    y.V.col(2) *= 1.03;
+
+    std::mt19937 rng(18433);
+    std::normal_distribution<double> n(0.0, 1.0);
+    Eigen::MatrixXd dx = Eigen::MatrixXd::Zero(x.n_vertices(), 3);
+    Eigen::MatrixXd dy = Eigen::MatrixXd::Zero(y.n_vertices(), 3);
+    for (int i = 0; i < x.n_vertices(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            dx(i, c) = n(rng);
+            dy(i, c) = n(rng);
+        }
+    }
+    const double dir_norm =
+        std::sqrt(dx.squaredNorm() + dy.squaredNorm());
+    dx /= dir_norm;
+    dy /= dir_norm;
+
+    ShellEnergyParams params{};
+    params.lambda = 0.0;
+    params.mu = 0.0;
+    const ShellEnergyHessianResult H = shell_energy_hessian(x, y, params);
+    const Eigen::VectorXd vx = pack_vertex_matrix(dx);
+    const Eigen::VectorXd vy = pack_vertex_matrix(dy);
+    const Eigen::VectorXd hx = H.ref_ref * vx + H.ref_def * vy;
+    const Eigen::VectorXd hy = H.def_ref * vx + H.def_def * vy;
+
+    const double h = 1e-6;
+    MeshData xp = x;
+    MeshData xm = x;
+    MeshData yp = y;
+    MeshData ym = y;
+    xp.V += h * dx;
+    xm.V -= h * dx;
+    yp.V += h * dy;
+    ym.V -= h * dy;
+    const ShellEnergyGradientResult gp =
+        shell_energy_with_gradient(xp, yp, params);
+    const ShellEnergyGradientResult gm =
+        shell_energy_with_gradient(xm, ym, params);
+    const Eigen::VectorXd fd_x =
+        (pack_vertex_matrix(gp.grad_ref) -
+         pack_vertex_matrix(gm.grad_ref)) / (2.0 * h);
+    const Eigen::VectorXd fd_y =
+        (pack_vertex_matrix(gp.grad_def) -
+         pack_vertex_matrix(gm.grad_def)) / (2.0 * h);
+
+    const double err =
+        std::max((hx - fd_x).lpNorm<Eigen::Infinity>(),
+                 (hy - fd_y).lpNorm<Eigen::Infinity>());
+    const double scale =
+        std::max({1.0,
+                  hx.lpNorm<Eigen::Infinity>(),
+                  hy.lpNorm<Eigen::Infinity>(),
+                  fd_x.lpNorm<Eigen::Infinity>(),
+                  fd_y.lpNorm<Eigen::Infinity>()});
+    const double rel = err / scale;
+    std::cout << "    max abs err = " << err
+              << ", max rel err = " << rel << "\n";
+    check(rel < 5e-5,
+          "closed-form bending Hessian matches FD directional derivative");
+}
+
 void test_path_energy_identity_zero() {
     std::cout << "-- path energy is ~0 for constant trajectory --\n";
     MeshData x = make_icosphere(2);
@@ -1384,6 +1591,8 @@ void test_path_energy_gradient_fd() {
     p.tpe_adaptive.max_depth = 2;
     p.tpe_alpha = 6.0;
     p.tpe_theta = 0.5;
+    p.rigid_translation_weight = 0.2;
+    p.rigid_rotation_weight = 0.03;
     const std::vector<PathEnergyFrameCache> frozen_cache =
         build_path_energy_frame_cache(frames, p);
 
@@ -1506,6 +1715,10 @@ int main() {
     test_bending_gradient_analytical_matches_fd_icosphere();
     test_bending_gradient_hinge_directional_derivative();
     test_shell_energy_gradient_fd_deformed_mesh();
+    test_shell_def_gradient_helper_matches_full_gradient();
+    test_shell_hessian_symmetry();
+    test_shell_hessian_directional_derivative();
+    test_bending_hessian_directional_derivative();
     test_path_energy_identity_zero();
     test_path_energy_gradient_fd();
     test_trust_region_interpolation_decreases_path_energy();

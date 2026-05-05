@@ -156,8 +156,11 @@ int main(int argc, char **argv) {
 
         polyscope::options::programName =
             "Repulsive Shells - " + input.string();
-        polyscope::options::autocenterStructures = true;
-        polyscope::options::autoscaleStructures = true;
+        // Preserve world-space registration between frame meshes and static
+        // obstacles. Per-structure centering/scaling makes a ball outside a
+        // tube display on top of the tube.
+        polyscope::options::autocenterStructures = false;
+        polyscope::options::autoscaleStructures = false;
         polyscope::options::groundPlaneMode =
             polyscope::GroundPlaneMode::ShadowOnly;
         polyscope::init();

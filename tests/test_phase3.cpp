@@ -253,6 +253,291 @@ void test_surface_tpe_barrier_gradient_fd() {
           "surface TPE barrier gradient matches central FD");
 }
 
+void test_surface_tpe_barrier_bh_theta_zero_matches_brute() {
+    std::cout << "-- surface TPE barrier BH theta=0 parity --\n";
+    MeshData mesh = make_icosphere(0);
+    mesh.normalize();
+    mesh.V.rowwise() += Eigen::RowVector3d(1.2, 0.07, -0.04);
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.55;
+    barrier.L0 = barrier.compute_L0();
+
+    const double e_brute = surface_tpe_barrier_energy(mesh, barrier, 6.0);
+    const double e_bh = surface_tpe_barrier_energy_bh(
+        mesh, barrier, 6.0, 0.0);
+    const Eigen::MatrixXd g_brute =
+        surface_tpe_barrier_gradient(mesh, barrier, 6.0);
+    const Eigen::MatrixXd g_bh =
+        surface_tpe_barrier_gradient_bh(mesh, barrier, 6.0, 0.0);
+    const double e_rel = std::abs(e_brute - e_bh) /
+                         std::max({1.0, std::abs(e_brute), std::abs(e_bh)});
+    const double g_abs = (g_brute - g_bh).cwiseAbs().maxCoeff();
+    const double g_rel =
+        g_abs / std::max({1.0, g_brute.cwiseAbs().maxCoeff(),
+                          g_bh.cwiseAbs().maxCoeff()});
+
+    std::cout << "    energy rel err = " << e_rel
+              << ", grad rel err = " << g_rel
+              << ", grad max abs err = " << g_abs << "\n";
+    check(e_rel < 1e-12, "BH theta=0 barrier energy matches brute");
+    check(g_rel < 1e-12, "BH theta=0 barrier gradient matches brute");
+}
+
+void test_surface_tpe_barrier_bh_gradient_fd() {
+    std::cout << "-- surface TPE barrier BH frozen-partition FD check --\n";
+    MeshData mesh = make_icosphere(0);
+    mesh.normalize();
+    mesh.V.rowwise() += Eigen::RowVector3d(1.45, 0.06, 0.03);
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.50;
+    barrier.L0 = barrier.compute_L0();
+
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.5);
+
+    const Eigen::VectorXd x = flatten_matrix(mesh.V);
+    GradCheckResult r = finite_diff_gradient_check(
+        [&](const Eigen::VectorXd &v) {
+            return surface_tpe_barrier_energy_bh(
+                with_vertices(mesh, v), barrier, cache, 6.0);
+        },
+        [&](const Eigen::VectorXd &v) {
+            return flatten_matrix(surface_tpe_barrier_gradient_bh(
+                with_vertices(mesh, v), barrier, cache, 6.0));
+        },
+        x,
+        1e-6);
+
+    std::cout << "    max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index << "\n";
+    check(r.pass(1e-4),
+          "BH surface barrier gradient matches frozen-partition FD");
+}
+
+void test_surface_tpe_barrier_adaptive_depth0_matches_midpoint() {
+    std::cout << "-- surface TPE barrier adaptive depth0 parity --\n";
+    MeshData mesh = make_icosphere(0);
+    mesh.normalize();
+    mesh.V.rowwise() += Eigen::RowVector3d(1.35, 0.05, -0.02);
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.55;
+    barrier.L0 = barrier.compute_L0();
+
+    TpeAdaptiveParams adaptive;
+    adaptive.enabled = true;
+    adaptive.theta = 10.0;
+    adaptive.max_depth = 0;
+
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.0, adaptive);
+    const double e_mid =
+        surface_tpe_barrier_energy_bh(mesh, barrier, 6.0, 0.0);
+    const double e_ad =
+        surface_tpe_barrier_energy_bh(mesh, barrier, cache, 6.0);
+    const Eigen::MatrixXd g_mid =
+        surface_tpe_barrier_gradient_bh(mesh, barrier, 6.0, 0.0);
+    const Eigen::MatrixXd g_ad =
+        surface_tpe_barrier_gradient_bh(mesh, barrier, cache, 6.0);
+
+    const double e_err = std::abs(e_ad - e_mid);
+    const double g_err = (g_ad - g_mid).cwiseAbs().maxCoeff();
+    std::cout << "    adaptive terms = " << cache.near_terms.size()
+              << ", |E_ad - E_mid| = " << e_err
+              << ", grad max abs err = " << g_err << "\n";
+    check(e_err < 1e-10,
+          "surface barrier adaptive depth0 energy equals midpoint");
+    check(g_err < 1e-10,
+          "surface barrier adaptive depth0 gradient equals midpoint");
+}
+
+void test_surface_tpe_barrier_adaptive_gradient_fd() {
+    std::cout << "-- surface TPE barrier adaptive FD check --\n";
+    MeshData mesh = make_icosphere(0);
+    mesh.normalize();
+    mesh.V.rowwise() += Eigen::RowVector3d(1.05, 0.04, 0.02);
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier = make_icosphere(0);
+    barrier.normalize();
+    barrier.V *= 0.60;
+    barrier.L0 = barrier.compute_L0();
+
+    TpeAdaptiveParams adaptive;
+    adaptive.enabled = true;
+    adaptive.theta = 10.0;
+    adaptive.max_depth = 2;
+    adaptive.max_stack_items = 400000;
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.0, adaptive);
+
+    const Eigen::VectorXd x = flatten_matrix(mesh.V);
+    GradCheckResult r = finite_diff_gradient_check(
+        [&](const Eigen::VectorXd &v) {
+            return surface_tpe_barrier_energy_bh(
+                with_vertices(mesh, v), barrier, cache, 6.0);
+        },
+        [&](const Eigen::VectorXd &v) {
+            return flatten_matrix(surface_tpe_barrier_gradient_bh(
+                with_vertices(mesh, v), barrier, cache, 6.0));
+        },
+        x,
+        1e-6);
+
+    std::cout << "    adaptive terms = " << cache.near_terms.size()
+              << "\n    max abs err = " << r.max_abs_err
+              << ", max rel err = " << r.max_rel_err
+              << ", worst index = " << r.worst_index << "\n";
+    check(r.pass(5e-3),
+          "adaptive surface barrier gradient matches frozen-cache FD");
+}
+
+void test_surface_tpe_barrier_adaptive_near_contact_growth() {
+    std::cout << "-- surface TPE barrier adaptive near-contact growth --\n";
+    const double alpha = 6.0;
+    const std::vector<double> deltas = {0.2, 0.1, 0.05, 0.025};
+    std::vector<double> e_mid;
+    std::vector<double> e_ad;
+    e_mid.reserve(deltas.size());
+    e_ad.reserve(deltas.size());
+
+    MeshData barrier;
+    barrier.V.resize(3, 3);
+    barrier.V << 0.0, 0.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0;
+    barrier.F.resize(1, 3);
+    barrier.F << 0, 1, 2;
+    barrier.L0 = barrier.compute_L0();
+
+    for (double d : deltas) {
+        MeshData mesh;
+        mesh.V.resize(3, 3);
+        mesh.V << 0.05, 0.05, d,
+                  1.80, 0.05, 1.0,
+                  0.05, 1.80, 1.0;
+        mesh.F.resize(1, 3);
+        mesh.F << 0, 1, 2;
+        mesh.L0 = mesh.compute_L0();
+
+        TpeAdaptiveParams adaptive;
+        adaptive.enabled = true;
+        adaptive.theta = 0.5;
+        adaptive.max_depth = 7;
+        adaptive.max_stack_items = 500000;
+        const SurfaceBarrierCache cache =
+            build_surface_tpe_barrier_cache(mesh, barrier, 0.0, adaptive);
+
+        e_mid.push_back(surface_tpe_barrier_energy_bh(
+            mesh, barrier, alpha, 0.0));
+        e_ad.push_back(surface_tpe_barrier_energy_bh(
+            mesh, barrier, cache, alpha));
+    }
+
+    bool midpoint_monotone = true;
+    bool adaptive_monotone = true;
+    bool adaptive_ratio_monotone = true;
+    for (size_t i = 1; i < deltas.size(); ++i) {
+        if (!(e_mid[i] >= e_mid[i - 1])) midpoint_monotone = false;
+        if (!(e_ad[i] >= e_ad[i - 1])) adaptive_monotone = false;
+        if (!(e_ad[i] / e_mid[i] >= e_ad[i - 1] / e_mid[i - 1])) {
+            adaptive_ratio_monotone = false;
+        }
+    }
+    const double growth_mid = e_mid.back() / e_mid.front();
+    const double growth_ad = e_ad.back() / e_ad.front();
+    std::cout << "    midpoint E: ";
+    for (double e : e_mid) std::cout << e << " ";
+    std::cout << "\n    adaptive E: ";
+    for (double e : e_ad) std::cout << e << " ";
+    std::cout << "\n    growth midpoint: " << growth_mid
+              << "\n    growth adaptive: " << growth_ad << "\n";
+    check(midpoint_monotone,
+          "surface barrier midpoint energy increases as gap shrinks");
+    check(adaptive_monotone,
+          "surface barrier adaptive energy increases as gap shrinks");
+    check(adaptive_ratio_monotone,
+          "surface barrier adaptive/midpoint ratio grows near contact");
+    check(growth_ad > growth_mid,
+          "surface barrier adaptive response grows faster than midpoint");
+}
+
+void test_path_energy_uses_adaptive_surface_tpe_barrier() {
+    std::cout << "-- path-energy wires adaptive surface TPE barrier --\n";
+    const double alpha = 6.0;
+
+    MeshData barrier;
+    barrier.V.resize(3, 3);
+    barrier.V << 0.0, 0.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0;
+    barrier.F.resize(1, 3);
+    barrier.F << 0, 1, 2;
+    barrier.L0 = barrier.compute_L0();
+
+    MeshData mesh;
+    mesh.V.resize(3, 3);
+    mesh.V << 0.05, 0.05, 0.035,
+              1.80, 0.05, 1.0,
+              0.05, 1.80, 1.0;
+    mesh.F.resize(1, 3);
+    mesh.F << 0, 1, 2;
+    mesh.L0 = mesh.compute_L0();
+
+    PathEnergyParams midpoint_params;
+    midpoint_params.self_tpe_weight = 0.0;
+    midpoint_params.tpe_barrier_mesh = &barrier;
+    midpoint_params.tpe_barrier_weight = 1.0;
+    midpoint_params.tpe_alpha = alpha;
+    midpoint_params.tpe_theta = 0.0;
+    midpoint_params.tpe_adaptive.enabled = false;
+
+    PathEnergyParams adaptive_params = midpoint_params;
+    adaptive_params.tpe_adaptive.enabled = true;
+    adaptive_params.tpe_adaptive.theta = 0.5;
+    adaptive_params.tpe_adaptive.max_depth = 7;
+    adaptive_params.tpe_adaptive.max_stack_items = 500000;
+
+    const double path_mid =
+        path_energy({mesh}, midpoint_params).phi_per_frame[0];
+    const double path_ad_uncached =
+        path_energy({mesh}, adaptive_params).phi_per_frame[0];
+    const std::vector<PathEnergyFrameCache> cache =
+        build_path_energy_frame_cache({mesh}, adaptive_params);
+    const double path_ad_cached =
+        path_energy({mesh}, adaptive_params, &cache).phi_per_frame[0];
+    const SurfaceBarrierCache direct_cache =
+        build_surface_tpe_barrier_cache(
+            mesh, barrier, 0.0, adaptive_params.tpe_adaptive);
+    const double direct_ad =
+        surface_tpe_barrier_energy_bh(mesh, barrier, direct_cache, alpha);
+
+    std::cout << "    path midpoint = " << path_mid
+              << ", path adaptive uncached = " << path_ad_uncached
+              << ", path adaptive cached = " << path_ad_cached
+              << ", direct adaptive = " << direct_ad
+              << ", adaptive terms = " << cache[0].barrier_cache.near_terms.size()
+              << "\n";
+    check(cache[0].has_barrier_cache &&
+              cache[0].barrier_cache.has_adaptive &&
+              !cache[0].barrier_cache.near_terms.empty(),
+          "path-energy barrier cache contains adaptive cross terms");
+    check(path_ad_uncached > path_mid * 1.1,
+          "path-energy uncached surface barrier uses adaptive quadrature");
+    check(std::abs(path_ad_cached - direct_ad) <=
+              1e-10 * std::max(1.0, std::abs(direct_ad)),
+          "path-energy cached surface barrier matches direct adaptive barrier");
+}
+
 void test_barrier_divergence() {
     std::cout << "-- obstacle barrier divergence near contact --\n";
 
@@ -413,6 +698,15 @@ void test_path_energy_with_surface_tpe_barrier() {
               std::abs(same.terms.total) < 1e-10,
           "constant surface TPE barrier does not add ordinary path energy");
 
+    const PathEnergyResult beta_one = path_energy(frames, params);
+    PathEnergyParams beta_scaled = params;
+    beta_scaled.graph_beta = 0.25;
+    const PathEnergyResult beta_quarter = path_energy(frames, beta_scaled);
+    check(std::abs(beta_quarter.terms.repulsive_sum -
+                   0.25 * beta_one.terms.repulsive_sum) <=
+              1e-10 * std::max(1.0, beta_one.terms.repulsive_sum),
+          "graph_beta scales the squared graph-potential difference");
+
     GradCheckResult r = finite_diff_gradient_check(
         [&](const Eigen::VectorXd &z) {
             std::vector<MeshData> f = frames;
@@ -463,6 +757,12 @@ int main() {
     test_sdf_gradient_fd();
     test_obstacle_energy_gradient_fd();
     test_surface_tpe_barrier_gradient_fd();
+    test_surface_tpe_barrier_bh_theta_zero_matches_brute();
+    test_surface_tpe_barrier_bh_gradient_fd();
+    test_surface_tpe_barrier_adaptive_depth0_matches_midpoint();
+    test_surface_tpe_barrier_adaptive_gradient_fd();
+    test_surface_tpe_barrier_adaptive_near_contact_growth();
+    test_path_energy_uses_adaptive_surface_tpe_barrier();
     test_barrier_divergence();
     test_path_energy_with_obstacle();
     test_path_energy_with_surface_tpe_barrier();

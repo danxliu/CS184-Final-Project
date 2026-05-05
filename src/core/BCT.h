@@ -6,7 +6,9 @@
 
 namespace rsh {
 
-// A pair of BVH nodes, referred to by their indices into BVH::nodes.
+// A pair of BVH nodes. For self traversals both indices refer to the same
+// BVH; for cross traversals `u` indexes the left BVH and `v` indexes the
+// right BVH.
 struct ClusterPair {
     int u;
     int v;
@@ -32,6 +34,14 @@ struct BlockPairs {
 // for the global tree and theta ≈ 10 for the near-field adaptive scheme in
 // Phase 3 (not relevant here).
 BlockPairs build_bct_self(const BVH &bvh, double theta = 0.5);
+
+// Enumerate block-cluster pairs between two distinct BVHs. The output covers
+// every Cartesian product face pair exactly once. The same MAC as
+// build_bct_self is used, with `u` indexing `left.nodes` and `v` indexing
+// `right.nodes`.
+BlockPairs build_bct_cross(const BVH &left,
+                           const BVH &right,
+                           double theta = 0.5);
 
 } // namespace rsh
 

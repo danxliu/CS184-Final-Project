@@ -26,10 +26,22 @@ assets/torus_12x8.obj
 # External meshes not used by any current code path
 assets/spot.obj
 
-# Claude
+# Agent context (local-only working notes; CLAUDE.md is a symlink to AGENTS.md
+# so Claude Code, Codex CLI, Cursor, etc. all pick up the same source of truth)
+AGENTS.md
 CLAUDE.md
 .claude/
 PHASE_NOTES.md
+PARKING.md
+communication.md
+BALL_TUBE_FIDELITY.md
+
+# Polyscope / ImGui runtime UI state
+.polyscope.ini
+imgui.ini
+
+# WIP local-only demo (not yet ready to track)
+tests/demo_phase3_torus_tube_interp.cpp
 
 # VSCode "Local History" extension snapshots
 .history/
