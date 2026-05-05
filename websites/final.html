@@ -254,7 +254,8 @@
                 Repulsive-surface optimization for self-intersection-free
                 triangle meshes, implemented in C++/OpenMP with Barnes-Hut
                 acceleration, Sobolev-style preconditioning, dynamic remeshing,
-                and a genus-0-through-genus-5 canonical embedding gallery.
+                a genus-0-through-genus-5 canonical embedding gallery, and a
+                30-frame sphere-through-tube interpolation demo.
             </p>
             <div class="team">
                 <span><strong>Team:</strong></span>
@@ -266,6 +267,7 @@
             <div class="links">
                 <a href="proposal.html">Proposal</a>
                 <a href="milestone.html">Milestone</a>
+                <a href="#results">Final results</a>
                 <a href="https://github.com/danxliu/CS184-Final-Project"
                     >GitHub repo</a
                 >
@@ -285,18 +287,21 @@
                     this was too large for the timeframe of a class project.
                     Therefore, our final project focuses on building the
                     foundational system it relies on, called
-                    <em>Repulsive Surfaces</em>. We successfully implemented an
-                    algorithm that naturally untangles 3D meshes by simulating a
-                    repulsive force, and we tested it by unraveling shapes with
-                    0 to 5 holes (genus 0 through 5).
+                    <em>Repulsive Surfaces</em>, plus one focused
+                    graph-manifold interpolation demo from the shell pipeline.
+                    We successfully implemented an algorithm that naturally
+                    untangles 3D meshes by simulating a repulsive force, tested
+                    it by unraveling shapes with 0 to 5 holes (genus 0 through
+                    5), and used the same repulsive potential to drive a
+                    30-frame sphere-through-tube sequence.
                 </p>
-
                 <div class="note">
                     Scope changed after the milestone: GPU acceleration (CUDA)
                     and the complete Repulsive Shells system became stretch
-                    goals. While we implemented some parts of the shell system,
-                    our main completed result is reproducing the Repulsive
-                    Surfaces "untying" experiments.
+                    goals. We implemented enough of the shell/path machinery to
+                    ship the ball-through-tube demo, but our strongest
+                    validated result is the Repulsive Surfaces "untying"
+                    pipeline and gallery.
                 </div>
             </section>
 
@@ -366,6 +371,17 @@
                         and smoothing out the triangles. This keeps the 3D model
                         clean, uniform, and stable throughout the entire
                         unraveling process.
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-label">Path demo</div>
+                    <div class="step-body">
+                        For the ball-through-tube example, we used the
+                        graph-manifold path energy from Repulsive Shells with
+                        shell elasticity, self TPE, a fixed-surface TPE barrier
+                        for the tube wall, and a small signed-distance guard.
+                        The trust-region solve optimized the interior frames of
+                        a 30-frame path while keeping the endpoints fixed.
                     </div>
                 </div>
                 <h3>Lessons learned</h3>
@@ -540,6 +556,43 @@
                     embedded, low-energy states rather than exact symmetry
                     matches to every entry in the Repulsive Surfaces gallery.
                 </p>
+
+                <h2>Sphere-through-tube interpolation</h2>
+                <p>
+                    We also completed a focused Repulsive Shells-style path
+                    demo: a sphere starts outside a hollow tube, enters the
+                    narrow channel, and exits the other side over 30 saved
+                    frames. The solve used shell energy for temporal shape
+                    regularity, TPE for self-repulsion, a fixed tube-surface TPE
+                    barrier, and a small SDF guard so coarse trial steps that
+                    entered the wall were rejected.
+                </p>
+                <div class="video-block">
+                    <video controls muted playsinline preload="metadata">
+                        <source
+                            src="final_assets/ball_tube_interp.mp4"
+                            type="video/mp4"
+                        />
+                    </video>
+                    <div class="plot-caption">
+                        <strong>Ball-through-tube clip.</strong> Rendered from
+                        the 30 OBJ frames in <code>out/ball_tube_interp</code>.
+                        The tube is shown as a wire obstacle so the compressed
+                        sphere remains visible in the channel.
+                    </div>
+                </div>
+                <div class="plot">
+                    <img
+                        src="final_assets/ball_tube_energy.svg"
+                        alt="Ball-through-tube energy and clearance plot"
+                    />
+                    <div class="plot-caption">
+                        The graph repulsion term dropped from 0.0748 to
+                        0.00052 over 30 accepted trust-region steps. The path
+                        stayed feasible throughout; the minimum signed tube
+                        clearance in the final sequence was 0.0213.
+                    </div>
+                </div>
 
                 <h3>Reference validation</h3>
                 <p>
