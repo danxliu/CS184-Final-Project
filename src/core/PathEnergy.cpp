@@ -181,13 +181,16 @@ double rigid_segment_energy(const MeshData &prev,
         e += params.rigid_translation_weight * dc.squaredNorm();
     }
     if (params.rigid_rotation_weight > 0.0) {
-        double rot = 0.0;
+        // RS Eq. 27: ‖Σ_v (x_v^k − x_v^{k-1}) × x_v^{k-1}‖². Since a × a = 0,
+        // this collapses to ‖Σ_v b_v × a_v‖² with a = prev, b = next — a
+        // single net angular-momentum-like vector, then squared.
+        Eigen::Vector3d L = Eigen::Vector3d::Zero();
         for (int i = 0; i < prev.n_vertices(); ++i) {
             const Eigen::Vector3d a = prev.V.row(i).transpose();
             const Eigen::Vector3d b = next.V.row(i).transpose();
-            rot += b.cross(a).squaredNorm();
+            L += b.cross(a);
         }
-        e += params.rigid_rotation_weight * rot;
+        e += params.rigid_rotation_weight * L.squaredNorm();
     }
     return e;
 }
@@ -213,16 +216,20 @@ void add_rigid_segment_gradient(const MeshData &prev,
 
     if (params.rigid_rotation_weight > 0.0) {
         const double w = scale * params.rigid_rotation_weight;
+        // L = Σ_v b_v × a_v is a single 3-vector shared across all vertices.
+        Eigen::Vector3d L = Eigen::Vector3d::Zero();
         for (int i = 0; i < nv; ++i) {
             const Eigen::Vector3d a = prev.V.row(i).transpose();
             const Eigen::Vector3d b = next.V.row(i).transpose();
-            const double aa = a.squaredNorm();
-            const double bb = b.squaredNorm();
-            const double ab = a.dot(b);
-            const Eigen::Vector3d ga = 2.0 * w * (bb * a - ab * b);
-            const Eigen::Vector3d gb = 2.0 * w * (aa * b - ab * a);
-            grad_prev.row(i) += ga.transpose();
-            grad_next.row(i) += gb.transpose();
+            L += b.cross(a);
+        }
+        // ∇_{a_v} ‖L‖² = 2 (L × b_v); ∇_{b_v} ‖L‖² = 2 (a_v × L).
+        const double two_w = 2.0 * w;
+        for (int i = 0; i < nv; ++i) {
+            const Eigen::Vector3d a = prev.V.row(i).transpose();
+            const Eigen::Vector3d b = next.V.row(i).transpose();
+            grad_prev.row(i) += (two_w * L.cross(b)).transpose();
+            grad_next.row(i) += (two_w * a.cross(L)).transpose();
         }
     }
 }

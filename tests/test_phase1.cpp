@@ -1675,6 +1675,49 @@ void test_trust_region_interpolation_decreases_path_energy() {
     check(e1 <= e0 + 1e-10, "trust-region does not increase objective");
 }
 
+void test_trust_region_rotation_penalty_monotone() {
+    // Regression for RS Eq. 27 rigid-rotation HVP. With
+    // rigid_rotation_weight non-zero, Steihaug CG must still produce
+    // monotone-decreasing model energy — catches sign / chain-rule
+    // mistakes in the HVP that the path-energy gradient FD test cannot.
+    std::cout << "-- trust-region monotone w/ rigid_rotation_weight --\n";
+    MeshData x0 = make_icosphere(1);
+    x0.normalize();
+    MeshData x3 = x0;
+    Eigen::AngleAxisd rot(0.4, Eigen::Vector3d::UnitZ());
+    for (int i = 0; i < x3.n_vertices(); ++i) {
+        x3.V.row(i) =
+            (rot.matrix() * x0.V.row(i).transpose()).transpose();
+    }
+    x3.V.col(0).array() += 0.15;
+
+    std::vector<MeshData> frames(4, x0);
+    frames[3] = x3;
+    frames[1] = x0;
+    frames[2] = x3;
+
+    PathEnergyParams ep;
+    ep.tpe_adaptive.enabled = true;
+    ep.tpe_adaptive.max_depth = 2;
+    ep.rigid_translation_weight = 0.5;
+    ep.rigid_rotation_weight = 0.5;
+
+    TrustRegionParams tp;
+    tp.max_iters = 6;
+    tp.max_cg_iters = 25;
+    tp.initial_radius = 1e-2;
+    tp.max_radius = 5e-2;
+
+    const double e0 = path_energy(frames, ep).terms.total;
+    const TrustRegionResult res =
+        interpolate_geodesic_trust_region(frames, ep, tp);
+    const double e1 = path_energy(res.frames, ep).terms.total;
+    std::cout << "    E0 = " << e0 << ", E1 = " << e1
+              << ", accepted = " << res.accepted_steps << "\n";
+    check(e1 <= e0 + 1e-10,
+          "trust-region with rotation penalty does not increase objective");
+}
+
 } // namespace
 
 int main() {
@@ -1722,6 +1765,7 @@ int main() {
     test_path_energy_identity_zero();
     test_path_energy_gradient_fd();
     test_trust_region_interpolation_decreases_path_energy();
+    test_trust_region_rotation_penalty_monotone();
 
     std::cout << "\n"
               << (failures == 0 ? "ALL PASSED"

@@ -8,26 +8,6 @@
             href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700&display=swap"
             rel="stylesheet"
         />
-        <link
-            rel="stylesheet"
-            href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
-        />
-        <script
-            defer
-            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
-        ></script>
-        <script
-            defer
-            src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
-            onload="
-                renderMathInElement(document.body, {
-                    delimiters: [
-                        { left: '$$', right: '$$', display: true },
-                        { left: '$', right: '$', display: false },
-                    ],
-                })
-            "
-        ></script>
         <style>
             :root {
                 --bg: #f0f2f5;
@@ -36,588 +16,618 @@
                 --text: #1e2a38;
                 --text-dim: #4a5568;
                 --label: #8896a7;
-                --nav-bg: rgba(240, 242, 245, 0.9);
             }
-            .dark {
-                --bg: #191d24;
-                --surface: #21262e;
-                --border: #2e3440;
-                --text: #bfc5ce;
-                --text-dim: #8891a0;
-                --label: #5c6470;
-                --nav-bg: rgba(25, 29, 36, 0.9);
-            }
-
             * {
+                box-sizing: border-box;
                 margin: 0;
                 padding: 0;
-                box-sizing: border-box;
             }
-            html {
-                scroll-behavior: smooth;
-            }
-
             body {
-                font-family: "Alegreya Sans", sans-serif;
                 background: var(--bg);
                 color: var(--text);
-                line-height: 1.75;
-                font-size: 12px;
-                font-weight: 400;
+                font-family: "Alegreya Sans", sans-serif;
+                font-size: 15px;
+                line-height: 1.65;
                 -webkit-font-smoothing: antialiased;
-                transition:
-                    background 0.3s,
-                    color 0.3s;
             }
-
-            ::selection {
-                background: var(--text);
-                color: var(--bg);
-            }
-
-            nav {
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                z-index: 100;
-                padding: 1rem 2rem;
-                display: none;
-                gap: 1.5rem;
-                align-items: center;
-                background: var(--nav-bg);
-                backdrop-filter: blur(12px);
-                border-bottom: 1px solid var(--border);
-                font-size: 0.82rem;
-                letter-spacing: 0.03em;
-            }
-            nav a {
-                color: var(--text-dim);
-                text-decoration: none;
-                transition: color 0.2s;
-            }
-            nav a:hover {
-                color: var(--text);
-            }
-            nav .brand {
-                color: var(--text);
-                font-weight: 500;
-                margin-right: auto;
-                font-size: 0.85rem;
-            }
-
-            .hero {
-                min-height: 0;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                max-width: 860px;
-                margin: 0 auto;
-                margin-bottom: 1rem;
-            }
-            .hero-label {
-                font-size: 0.75rem;
-                color: var(--label);
-                letter-spacing: 0.15em;
-                text-transform: uppercase;
-                margin-bottom: 1.5rem;
-            }
-            .hero h1 {
-                /* font-size: clamp(2.5rem, 7vw, 4.5rem); */
-                font-size: 3rem;
-                line-height: 1.05;
-                font-weight: 400;
-                margin-bottom: 1rem;
-                letter-spacing: -0.02em;
-            }
-            .hero-sub {
-                font-size: 1.05rem;
-                color: var(--text-dim);
-                max-width: 660px;
-                line-height: 1.75;
-                margin-bottom: 2rem;
-            }
-            .team {
-                display: flex;
-                gap: 2rem;
-                flex-wrap: wrap;
-                align-items: center;
-            }
-            .team-member .name {
-                font-weight: 500;
-                font-size: 0.92rem;
-            }
+            .hero,
             .content {
-                max-width: 740px;
+                max-width: 880px;
                 margin: 0 auto;
-                padding: 0 2rem 6rem;
+                padding: 0 2rem;
             }
-            section {
-                margin-bottom: 1rem;
+            .hero {
+                padding-top: 4rem;
+                padding-bottom: 2rem;
             }
-
+            .hero-label,
             .section-num {
-                font-size: 0.7rem;
                 color: var(--label);
-                letter-spacing: 0.15em;
+                font-size: 0.74rem;
+                letter-spacing: 0.14em;
                 text-transform: uppercase;
-                margin-bottom: 0.5rem;
+            }
+            h1 {
+                font-size: clamp(2.9rem, 8vw, 5rem);
+                font-weight: 400;
+                line-height: 1.02;
+                margin: 0.7rem 0 1rem;
             }
             h2 {
-                font-size: 1.25rem;
+                font-size: 1.65rem;
                 font-weight: 400;
-                margin-bottom: 0.25rem;
                 line-height: 1.2;
+                margin: 0.2rem 0 0.8rem;
             }
             h3 {
-                font-size: 0.98rem;
-                font-weight: 600;
-                margin-top: 1.75rem;
-                margin-bottom: 0.4rem;
                 color: var(--text);
+                font-size: 1rem;
+                font-weight: 600;
+                margin: 1.2rem 0 0.35rem;
             }
             p {
-                margin-bottom: 1rem;
                 color: var(--text-dim);
+                margin-bottom: 0.9rem;
             }
-            p strong {
+            strong {
                 color: var(--text);
-                font-weight: 500;
+                font-weight: 600;
             }
-            a {
+            em {
                 color: var(--text);
-                text-decoration: underline;
-                text-decoration-color: var(--border);
-                text-underline-offset: 3px;
-                transition: text-decoration-color 0.2s;
-            }
-            a:hover {
-                text-decoration-color: var(--text);
             }
             code {
+                background: var(--surface);
+                border-radius: 2px;
+                color: var(--text);
                 font-family:
                     "SF Mono", "Consolas", "Menlo", ui-monospace, monospace;
                 font-size: 0.88em;
-                color: var(--text);
-                background: var(--surface);
-                padding: 0.05em 0.35em;
-                border-radius: 2px;
+                padding: 0.05em 0.3em;
             }
-            .plot {
-                margin: 1.25rem 0 0.5rem;
-                padding: 0.75rem;
+            a {
+                color: var(--text);
+                text-decoration-color: var(--border);
+                text-underline-offset: 3px;
+            }
+            .formula {
                 background: var(--surface);
                 border: 1px solid var(--border);
-                border-radius: 3px;
-            }
-            .plot img {
-                width: 100%;
-                height: auto;
+                border-radius: 4px;
+                color: var(--text);
                 display: block;
-                border-radius: 2px;
-            }
-            .plot-caption {
+                font-family:
+                    "SF Mono", "Consolas", "Menlo", ui-monospace, monospace;
                 font-size: 0.82rem;
-                color: var(--text-dim);
-                margin-top: 0.6rem;
-                line-height: 1.55;
+                line-height: 1.45;
+                margin: 0.7rem 0 1rem;
+                overflow-x: auto;
+                padding: 0.7rem 0.85rem;
+                white-space: pre;
             }
-            .week {
-                display: grid;
-                grid-template-columns: 90px 1fr;
-                gap: 1.5rem;
-                padding: 1rem 0;
-                border-bottom: 1px solid var(--border);
-            }
-            .week:last-child {
-                border-bottom: none;
-            }
-            .week-label {
-                font-size: 0.78rem;
-                color: var(--text);
-                padding-top: 0.1rem;
-            }
-            .week-content {
-                font-size: 12px;
-                color: var(--text-dim);
-                line-height: 1.65;
-            }
-            .week-content strong {
-                color: var(--text);
-                font-weight: 500;
-            }
-            .divider {
-                height: 1px;
-                background: linear-gradient(
-                    90deg,
-                    transparent,
-                    var(--border),
-                    transparent
-                );
-                margin: 3rem 0;
-            }
-            .links {
-                display: flex;
-                gap: 1.25rem;
-                flex-wrap: wrap;
-                margin-top: 1rem;
-                font-size: 0.9rem;
+            section {
+                margin-bottom: 2.2rem;
             }
             ul {
-                /* margin: 0.4rem 0 1.2rem 1.2rem; */
-                margin: 0.4rem 0 0.6rem 0.6rem;
                 color: var(--text-dim);
+                margin: 0.2rem 0 0.9rem 1.1rem;
             }
             li {
-                /* margin-bottom: 0.35rem; */
-                margin-bottom: 0.1rem;
+                margin-bottom: 0.25rem;
             }
-
-            @media (max-width: 640px) {
-                .week {
+            .team,
+            .links {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.9rem 1.4rem;
+                margin-top: 0.7rem;
+            }
+            .team span,
+            .links a {
+                color: var(--text-dim);
+                font-size: 0.93rem;
+            }
+            .note {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                color: var(--text-dim);
+                margin: 1rem 0;
+                padding: 0.8rem 0.95rem;
+            }
+            .step {
+                border-top: 1px solid var(--border);
+                display: grid;
+                gap: 1rem;
+                grid-template-columns: 110px 1fr;
+                padding: 0.8rem 0;
+            }
+            .step-label {
+                color: var(--text);
+                font-size: 0.82rem;
+                font-weight: 600;
+            }
+            .step-body {
+                color: var(--text-dim);
+            }
+            .gallery-grid {
+                display: grid;
+                gap: 0.8rem;
+                grid-template-columns: repeat(3, 1fr);
+                margin: 1rem 0;
+            }
+            .gallery-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 0.45rem;
+            }
+            .gallery-card img {
+                border-radius: 2px;
+                display: block;
+                width: 100%;
+            }
+            .gallery-card p {
+                font-size: 0.84rem;
+                line-height: 1.35;
+                margin: 0.35rem 0 0;
+            }
+            .plot {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                margin: 1rem 0;
+                padding: 0.65rem;
+            }
+            .video-block {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                margin: 1rem 0;
+                padding: 0.65rem;
+            }
+            .video-block video {
+                border-radius: 2px;
+                display: block;
+                width: 100%;
+            }
+            .plot img {
+                border-radius: 2px;
+                display: block;
+                width: 100%;
+            }
+            .plot-caption {
+                color: var(--text-dim);
+                font-size: 0.84rem;
+                line-height: 1.45;
+                margin-top: 0.45rem;
+            }
+            table {
+                border-collapse: collapse;
+                color: var(--text-dim);
+                font-size: 0.88rem;
+                margin: 0.8rem 0 1rem;
+                width: 100%;
+            }
+            th,
+            td {
+                border-bottom: 1px solid var(--border);
+                padding: 0.34rem 0.2rem;
+                text-align: right;
+            }
+            th:first-child,
+            td:first-child {
+                text-align: left;
+            }
+            .table-wrap {
+                overflow-x: auto;
+            }
+            @media (max-width: 700px) {
+                .step,
+                .gallery-grid {
                     grid-template-columns: 1fr;
-                    gap: 0.3rem;
                 }
-                .team {
-                    flex-direction: column;
-                    gap: 0.75rem;
-                    align-items: flex-start;
+                .hero,
+                .content {
+                    padding-left: 1rem;
+                    padding-right: 1rem;
+                }
+            }
+            @media print {
+                body {
+                    font-size: 11px;
+                }
+                .hero {
+                    padding-top: 0;
+                }
+                section {
+                    margin-bottom: 1.2rem;
                 }
             }
         </style>
     </head>
     <body>
-        <nav>
-            <span
-                class="brand"
-                id="dark-toggle"
-                style="cursor: pointer; line-height: 0"
-                ><svg
-                    width="24"
-                    height="14"
-                    viewBox="0 0 24 14"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                >
-                    <path
-                        d="M12 7C12 4 9.5 1 6.5 1S1 4 1 7s2.5 6 5.5 6S12 10 12 7Zm0 0c0 3 2.5 6 5.5 6S23 10 23 7s-2.5-6-5.5-6S12 4 12 7Z"
-                    /></svg
-            ></span>
-            <a href="#abstract">Abstract</a>
-            <a href="#approach">Technical approach</a>
-            <a href="#results">Results</a>
-            <a href="#references">References</a>
-        </nav>
-
-        <div class="hero">
+        <header class="hero">
             <div class="hero-label">CS 184 · Spring 2026 · Final Report</div>
-            <h1>Limitless: Infin<span id="i-anchor">i</span>ty</h1>
-            <!-- <p class="hero-sub">
-                A C++ implementation of the Repulsive Shells pipeline for
-                collision-free shape optimization, with Barnes-Hut acceleration,
-                Sobolev preconditioning, remeshing, and end-to-end demo/test
-                coverage on a CPU/OpenMP implementation.
-            </p> -->
+            <h1>Limitless: Infinity</h1>
+            <p>
+                Repulsive-surface optimization for self-intersection-free
+                triangle meshes, implemented in C++/OpenMP with Barnes-Hut
+                acceleration, Sobolev-style preconditioning, dynamic remeshing,
+                and a genus-0-through-genus-5 canonical embedding gallery.
+            </p>
             <div class="team">
-                <span
-                    style="
-                        color: var(--text-dim);
-                        font-size: 0.92rem;
-                        font-weight: 500;
-                    "
-                    >Team:</span
-                >
-                <div class="team-member">
-                    <span class="name">Atharv Sampath</span>
-                </div>
-                <div class="team-member">
-                    <span class="name">Michael Pham</span>
-                </div>
-                <div class="team-member">
-                    <span class="name">Daniel Liu</span>
-                </div>
-                <div class="team-member">
-                    <span class="name">Elen Papyan</span>
-                </div>
+                <span><strong>Team:</strong></span>
+                <span>Atharv Sampath</span>
+                <span>Michael Pham</span>
+                <span>Daniel Liu</span>
+                <span>Elen Papyan</span>
             </div>
             <div class="links">
-                <a href="proposal.html">Project proposal</a>
-                <a href="milestone.html">Milestone report</a>
-                <a
-                    href="https://github.com/danxliu/CS184-Final-Project"
-                    target="_blank"
-                    >GitHub repo</a
-                >
+                <a href="proposal.html">Proposal</a>
+                <a href="milestone.html">Milestone</a>
+                <a href="https://github.com/danxliu/CS184-Final-Project">GitHub repo</a>
             </div>
-        </div>
+        </header>
 
-        <div class="content">
+        <main class="content">
             <section id="abstract">
                 <div class="section-num">01: Abstract</div>
-                <h2>Collision-free optimization from a C++ systems build</h2>
+                <h2>Repulsive Surfaces as the completed result</h2>
                 <p>
-                    We built a CPU/OpenMP-first C++ implementation of major
-                    pieces of the <em>Repulsive Shells</em> pipeline, centered
-                    on tangent-point repulsion to prevent self-intersections
-                    during shape optimization.
+                    Our original proposal targeted <em>Repulsive Shells</em>,
+                    a SIGGRAPH 2024 framework for collision-free interpolation
+                    and extrapolation in shape space. During implementation we
+                    found that a paper-faithful graph-manifold shell solver was
+                    too large for the project window, so our final deliverable
+                    focuses on the underlying <em>Repulsive Surfaces</em>
+                    pipeline. We implemented tangent-point energy minimization
+                    on triangle meshes and reproduced the canonical embedding
+                    experiment for genus 0 through 5.
                 </p>
+                <p>
+                    The completed system minimizes the discrete tangent-point
+                    potential from Repulsive Surfaces, accelerates far-field
+                    interactions with a BVH and block-cluster tree, computes
+                    Sobolev-preconditioned descent directions with GMRES, and
+                    remeshes dynamically to preserve triangle quality. The
+                    final gallery outputs converge from noisy or procedurally
+                    generated inputs to embedded low-energy surfaces.
+                </p>
+                <div class="note">
+                    Scope changed after the milestone: CUDA and the complete
+                    Repulsive Shells graph-manifold solver became stretch
+                    goals. We still implemented partial shell components, but
+                    the defensible final claim is the Repulsive Surfaces
+                    canonical-embedding reproduction.
+                </div>
             </section>
 
             <section id="approach">
-                <div class="section-num">02: Technical approach</div>
-                <h2>What we implemented, how, and why</h2>
-                The overall rendering pipeline for an object is staged as
-                follows:
-                <ul>
-                    <li>
-                        <strong>Mesh Representation and Normalization</strong>:
-                        Setting up a stable starting shape.
-                    </li>
-                    <li>
-                        <strong>Face-Geometry Preprocessing</strong>:
-                        Calculating necessary information for each face of the
-                        shape before optimization.
-                    </li>
-                    <li>
-                        <strong>Tangent-Point Energy (TPE)</strong>: Using
-                        repulsive forces to stop the shape from intersecting
-                        with itself.
-                    </li>
-                    <li>
-                        <strong>Barnes-Hut Acceleration</strong>: Speeding up
-                        the repulsion calculations by grouping distant parts of
-                        the shape together using a Bounding Volume Hierarchy
-                        (BVH).
-                    </li>
-                    <li>
-                        <strong>H<sup>s</sup> Preconditioning</strong>: Ensuring
-                        the optimization steps smoothly descend towards a better
-                        shape.
-                    </li>
-                    <li>
-                        <strong>Line Search and Constraints</strong>: Making
-                        sure each update is safe and maintains the required
-                        properties of the shape.
-                    </li>
-                    <li>
-                        <strong>Remeshing</strong>: Keeping the triangles that
-                        make up the shape well-proportioned during the whole
-                        process.
-                    </li>
-                </ul>
+                <div class="section-num">02: Technical Approach</div>
+                <h2>From exact TPE to a gallery optimizer</h2>
                 <p>
-                    This is all wired through a custom core library
-                    (<code>rsh_core</code>) with viewer-backed diagnostics and
-                    regression-tested demos. Final outputs show stable
-                    convergence across baseline flow, preconditioned
-                    optimization, and compression-style sequence optimization.
+                    For a triangle mesh, we discretize tangent-point energy by
+                    midpoint quadrature over ordered pairs of distinct faces:
                 </p>
+                <div class="formula">Phi_hat(x) = sum_{t1 != t2} a1 a2 |dot(n1, c1 - c2)|^6 / ||c1 - c2||^12</div>
+                <p>
+                    This potential grows when distant parts of the same surface
+                    approach intersection. Minimizing it therefore spreads a
+                    surface into an embedded low-energy shape without explicit
+                    continuous collision detection.
+                </p>
+                <div class="formula">mesh -> face geometry -> TPE/BVH/BCT -> Hs-preconditioned direction -> line search -> remesh -> frame/energy logs</div>
 
-                <div class="week">
-                    <div class="week-label">Stack</div>
-                    <div class="week-content">
-                        We used Eigen for linear algebra, OpenMesh for half-edge
-                        mesh operations and mesh IO, OpenMP + Threads for
-                        parallelism, and NanoGUI/OpenGL for the viewer. These
-                        provide infrastructure, while the algorithms and
-                        pipeline logic are custom C++ code in
-                        <code>src/core</code>. The build is CMake-based with
-                        optional Polyscope and optional Repulsor
-                        cross-validation tooling.
+                <div class="step">
+                    <div class="step-label">Geometry</div>
+                    <div class="step-body">
+                        We built mesh storage, OpenMesh conversion,
+                        normalization, procedural test meshes, and analytical
+                        face-geometry derivatives for centroids, normals, and
+                        areas. These derivatives are the basis for the TPE
+                        gradient, and every major gradient path was checked
+                        against central finite differences.
                     </div>
                 </div>
-
-                <div class="week">
-                    <div class="week-label">Problems</div>
-                    <div class="week-content">
-                        Throughout the project, we faced and addressed several
-                        key challenges:
-                        <ul>
-                            <li>
-                                <strong>Derivative Mistakes:</strong> Complex
-                                math errors during energy calculations were
-                                caught early by implementing thorough
-                                finite-difference testing.
-                            </li>
-                            <li>
-                                <strong>Poor Descent Directions:</strong>
-                                Stability issues during H<sup>s</sup>
-                                optimization steps were resolved by falling back
-                                to a safer method (identity-preconditioned
-                                GMRES) with explicit diagnostics.
-                            </li>
-                            <li>
-                                <strong>Team Capacity:</strong> A project
-                                partner had to drop the class unexpectedly,
-                                requiring the remaining team members to
-                                reallocate tasks and adapt to the reduced
-                                bandwidth.
-                            </li>
-                        </ul>
+                <div class="step">
+                    <div class="step-label">Energy</div>
+                    <div class="step-body">
+                        We first implemented an exact O(n^2) TPE energy and
+                        gradient as an exact baseline, then added a Barnes-Hut
+                        approximation using a BVH and block-cluster tree. A
+                        major correction was switching the accelerated kernel to
+                        projector cluster aggregates and an AABB distance MAC;
+                        this removed a large energy underestimation on remeshed
+                        torus geometry.
                     </div>
                 </div>
-
-                <div class="week">
-                    <div class="week-label">Lessons</div>
-                    <div class="week-content">
-                        For research-grade graphics systems, the biggest
-                        productivity multiplier is a testable architecture: keep
-                        a small exact baseline, layer acceleration only after
-                        validation, and treat numerical fallback paths as
-                        first-class features rather than emergency hacks.
-                        Building from scratch in C++ is feasible for a class
-                        project when scope is staged and each phase has
-                        measurable artifacts.
+                <div class="step">
+                    <div class="step-label">Descent</div>
+                    <div class="step-body">
+                        Plain L2 descent is strongly mesh-dependent, so we
+                        implemented a Sobolev-style preconditioned direction
+                        using cotangent Laplacians, a fractional high-order
+                        operator, and GMRES. During gallery descent we also
+                        remove global scale and barycenter modes.
                     </div>
                 </div>
+                <div class="step">
+                    <div class="step-label">Remeshing</div>
+                    <div class="step-body">
+                        Connectivity must adapt as the shape moves. Our
+                        remeshing pass performs edge splits/collapses, flips,
+                        and smoothing, while preserving the initial target edge
+                        length and enforcing a face-count budget. The final
+                        higher-genus runs stayed close to a 1.15x face-count
+                        ratio after 500 iterations.
+                    </div>
+                </div>
+                <h3>Lessons learned</h3>
+                <p>
+                    The largest failures were not syntax bugs; they were
+                    numerical modeling mistakes. A cluster aggregate that passed
+                    small tests gave a biased energy on irregular near-contact
+                    meshes. OpenMP summation order changed optimizer
+                    trajectories enough to produce visibly different surfaces.
+                    Remeshing changed the effective resolution target until we
+                    preserved the initial edge length. The practical lesson is
+                    that research graphics code needs exact baselines and
+                    strict regression tests around anything that changes the
+                    objective.
+                </p>
             </section>
 
             <section id="results">
                 <div class="section-num">03: Results</div>
-                <h2>Final outputs and measured behavior</h2>
-
+                <h2>Genus 0-5 canonical embedding gallery</h2>
                 <p>
-                    <strong>Phase 1 Baseline:</strong> This test runs vanilla
-                    gradient descent (L2 flow) on the Barnes-Hut Tangent-Point
-                    Energy starting from an ellipsoid mesh, without any
-                    preconditioner or remeshing. The chart illustrates the
-                    energy decreasing rapidly at first but eventually stalling,
-                    demonstrating the ill-conditioned nature of the L2 gradient
-                    flow that motivates the need for a preconditioner.
+                    We ran six gallery optimizations with
+                    <code>OMP_NUM_THREADS=4</code>, 500 iterations, dynamic
+                    remeshing every 10 iterations, and frame dumps at every
+                    iteration. Outputs are stored under
+                    <code>out/gallery_genusN</code>.
                 </p>
 
+                <div class="video-block">
+                    <video controls muted playsinline preload="metadata">
+                        <source
+                            src="final_assets/gallery_descent.mp4"
+                            type="video/mp4"
+                        />
+                    </video>
+                    <div class="plot-caption">
+                        <strong>Showcase clip.</strong> A 3x2 composite of the
+                        actual 501-frame OBJ sequences for genus 0-5, rendered
+                        at 30 FPS from the saved optimization frames.
+                    </div>
+                </div>
+
+                <div class="gallery-grid">
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus0_final.png" alt="Final genus 0 surface" />
+                        <p><strong>Genus 0.</strong> Sphere-like minimizer.</p>
+                    </div>
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus1_final.png" alt="Final genus 1 surface" />
+                        <p><strong>Genus 1.</strong> Torus of revolution.</p>
+                    </div>
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus2_final.png" alt="Final genus 2 surface" />
+                        <p><strong>Genus 2.</strong> Multi-handle embedded state.</p>
+                    </div>
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus3_final.png" alt="Final genus 3 surface" />
+                        <p><strong>Genus 3.</strong> Higher-genus spread-out state.</p>
+                    </div>
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus4_final.png" alt="Final genus 4 surface" />
+                        <p><strong>Genus 4.</strong> Bounded-remesh result.</p>
+                    </div>
+                    <div class="gallery-card">
+                        <img src="final_assets/gallery_genus5_final.png" alt="Final genus 5 surface" />
+                        <p><strong>Genus 5.</strong> Largest shipped gallery mesh.</p>
+                    </div>
+                </div>
+
+                <div class="plot">
+                    <img
+                        src="final_assets/gallery_energy_absolute.svg"
+                        alt="Log-scale TPE descent curves for genus 0 through 5"
+                    />
+                    <div class="plot-caption">
+                        <strong>Tangent-point potential descent.</strong>
+                        Absolute energies use a log scale because topology and
+                        initialization change the starting potential by orders
+                        of magnitude.
+                    </div>
+                </div>
+
+                <div class="plot">
+                    <img
+                        src="final_assets/gallery_energy_normalized.svg"
+                        alt="Normalized TPE descent curves for genus 0 through 5"
+                    />
+                    <div class="plot-caption">
+                        <strong>Normalized potential descent.</strong> The same
+                        runs plotted as E / E0 show the relative decrease in
+                        tangent-point energy for each genus.
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>genus</th>
+                                <th>start E</th>
+                                <th>final E</th>
+                                <th>drop</th>
+                                <th>faces</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>0</td><td>231948</td><td>31.0357</td><td>7473.6x</td><td>1280 -> 1172</td></tr>
+                            <tr><td>1</td><td>1909.6</td><td>913.572</td><td>2.1x</td><td>576 -> 528</td></tr>
+                            <tr><td>2</td><td>43672.8</td><td>1656.33</td><td>26.4x</td><td>720 -> 828</td></tr>
+                            <tr><td>3</td><td>142481</td><td>2353.83</td><td>60.5x</td><td>1080 -> 1242</td></tr>
+                            <tr><td>4</td><td>346503</td><td>4505.47</td><td>76.9x</td><td>1440 -> 1656</td></tr>
+                            <tr><td>5</td><td>701006</td><td>7038.95</td><td>99.6x</td><td>1800 -> 2070</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>
+                    Genus 0 and 1 land on the expected round sphere and torus.
+                    The higher-genus examples are harder because the TPE
+                    landscape has many local minima; our shipped results are
+                    embedded, low-energy states rather than exact symmetry
+                    matches to every entry in the Repulsive Surfaces gallery.
+                </p>
+
+                <h3>Reference validation</h3>
+                <p>
+                    The final meshes were checked against Repulsor's all-pairs
+                    TPE implementation. Representative brute-force parity
+                    ratios were 0.999999999999958 for genus 0,
+                    1.000000000000016 for genus 1, 1.000000000000005 for genus
+                    2, 1.000000000000108 for genus 3, 1.000000000000292 for
+                    genus 4, and 1.000000000000280 for genus 5. This validates
+                    the core TPE kernel independently of our own finite
+                    difference tests.
+                </p>
+
+                <h3>Earlier diagnostics</h3>
+                <p>
+                    We also keep two smaller diagnostic plots in the report.
+                    The first shows the unpreconditioned baseline descending
+                    and stalling; the second shows the smoother
+                    preconditioned-flow behavior that motivated the final
+                    gallery optimizer.
+                </p>
                 <div class="plot">
                     <img
                         src="final_assets/phase1_energy.svg"
                         alt="Phase 1 L2 baseline energy trend"
                     />
                     <div class="plot-caption">
-                        <strong>Phase 1 baseline.</strong> In
-                        <code>out/phase1_flow/energy.csv</code>, energy drops
-                        from 181.414 to 40.9563 over 150 iterations (77.4%
-                        reduction, 4.43x ratio).
+                        <strong>L2 baseline.</strong> Energy drops from
+                        181.414 to 40.9563 over 150 iterations.
                     </div>
                 </div>
-
-                <p>
-                    <strong>Phase 2 H<sup>s</sup> Flow:</strong> Using the same
-                    ellipsoid setup, this test applies the H<sup>s</sup>
-                    preconditioner to compute the descent direction. The chart
-                    shows a stable, smooth energy descent over a large number of
-                    iterations without stalling, successfully rounding the shape
-                    toward a sphere.
-                </p>
-
                 <div class="plot">
                     <img
                         src="final_assets/phase2_energy.svg"
-                        alt="Phase 2 Hs flow energy trend"
+                        alt="Phase 2 preconditioned energy trend"
                     />
                     <div class="plot-caption">
-                        <strong>Phase 2 H<sup>s</sup> flow.</strong> In
-                        <code>out/phase2_hs_flow/energy.csv</code>, energy drops
-                        from 185.402 to 31.4393 over 1000 iterations (83.0%
-                        reduction, 5.90x ratio), with long-run stable descent.
+                        <strong>Preconditioned flow.</strong> Energy drops from
+                        185.402 to 31.4393 over 1000 iterations.
                     </div>
                 </div>
-
-                <div class="plot">
-                    <img
-                        src="milestone_assets/energy.png"
-                        alt="Detailed phase flow summary with silhouettes"
-                    />
-                    <div class="plot-caption">
-                        <strong>Detailed diagnostic visualization.</strong> We
-                        also retain the milestone figure for per-iteration
-                        context (energy, gradient norm, step size, and mesh
-                        silhouettes).
-                    </div>
-                </div>
-
-                <h3>Animations</h3>
-                <div>TODO: Add</div>
             </section>
 
-            <!-- <div class="divider"></div> -->
+            <section id="limitations">
+                <div class="section-num">04: Limitations</div>
+                <h2>What did not make the final claim</h2>
+                <p>
+                    We made real progress toward Repulsive Shells, but not
+                    enough to call the complete graph-manifold interpolation or
+                    extrapolation pipeline reproduced. The elastic shell energy,
+                    adaptive TPE quadrature, path energy, and trust-region
+                    solver exist in the codebase; the remaining gaps are
+                    obstacle barriers, the production cloth-eversion and
+                    ball-through-tube examples, a block-diagonal Steihaug
+                    preconditioner, and the CUDA port.
+                </p>
+                <p>
+                    The compression-style diagnostic below is useful evidence
+                    that the shell pieces interact with TPE and handle pins, but
+                    it is not one of our final named hero demos.
+                </p>
+                <div class="plot">
+                    <img
+                        src="final_assets/compression_energy.svg"
+                        alt="Compression-style shell and TPE diagnostic energy trend"
+                    />
+                    <div class="plot-caption">
+                        <strong>Compression-style diagnostic.</strong> Energy
+                        drops from 0.300655 to 0.200355 over 1345 optimization
+                        records while two pinned-handle surfaces are pushed
+                        toward each other.
+                    </div>
+                </div>
+            </section>
 
             <section id="references">
-                <div class="section-num">04: References</div>
+                <div class="section-num">05: References</div>
                 <h2>Papers, code, and tools</h2>
-
-                <h3>Primary papers</h3>
                 <ul>
-                    <li>
-                        Sassen, Schumacher, Rumpf, Crane (2024).
-                        <em>Repulsive Shells</em>. ACM SIGGRAPH.
-                    </li>
                     <li>
                         Yu, Brakensiek, Schumacher, Crane (2021).
                         <em>Repulsive Surfaces</em>. ACM SIGGRAPH Asia.
                     </li>
                     <li>
-                        Yu, Schumacher, Crane (2021).
-                        <em>Repulsive Curves</em>.
+                        Sassen, Schumacher, Rumpf, Crane (2024).
+                        <em>Repulsive Shells</em>. ACM SIGGRAPH.
                     </li>
                     <li>
-                        Strzelecki, von der Mosel (2013).
-                        <em
-                            >Tangent-point repulsive potentials for nonlinear
-                            energies</em
-                        >.
+                        Strzelecki and von der Mosel (2013).
+                        <em>Tangent-point repulsive potentials for a class of non-smooth sets</em>.
+                    </li>
+                    <li>
+                        Meyer, Desbrun, Schroder, Barr (2003).
+                        <em>Discrete Differential-Geometry Operators for Triangulated 2-Manifolds</em>.
+                    </li>
+                    <li>
+                        Grinspun, Hirani, Desbrun, Schroder (2003).
+                        <em>Discrete Shells</em>.
                     </li>
                     <li>
                         Heeren, Rumpf, Wardetzky, Wirth (2012).
                         <em>Time-Discrete Geodesics in the Space of Shells</em>.
                     </li>
-                </ul>
-
-                <h3>Implementation dependencies</h3>
-                <ul>
                     <li>
-                        C++17, CMake, Eigen3, OpenMesh, OpenMP, POSIX Threads
+                        Henrik Schumacher's Repulsor reference implementation,
+                        used for comparison but not vendored into our project.
                     </li>
                     <li>
-                        Optional: NanoGUI/OpenGL viewer, Polyscope viewer,
-                        BLAS/LAPACK/OpenBLAS for cross-validation targets
-                    </li>
-                    <li>
-                        Nix/devenv tooling for reproducible local environment
-                        setup
+                        C++17, CMake, Eigen, OpenMesh, OpenMP,
+                        NanoGUI/OpenGL, Polyscope, and Python/Matplotlib for
+                        report plots.
                     </li>
                 </ul>
             </section>
-
-            <!-- <div class="divider"></div> -->
 
             <section id="contributions">
-                <div class="section-num">05: Contributions</div>
-                <h2>Member Contributions</h2>
-
+                <div class="section-num">06: Contributions</div>
+                <h2>Member contributions</h2>
                 <ul>
-                    <li>Atharv:</li>
                     <li>
-                        Daniel: Worked on the H<sup>s</sup> preconditioner
-                        implementation, including the GMRES solver. Also worked
-                        on the tangent point energy implementation and its
-                        finite-difference testing framework.
+                        <strong>Atharv Sampath:</strong> Project scoping,
+                        paper/reference comparison, validation criteria,
+                        visual inspection of gallery and shell demos, and final
+                        presentation/writeup coordination.
                     </li>
                     <li>
-                        Michael: Worked on initial setup to lay groundwork for
-                        rest of the project. Implemented mesh data structure
-                        alongside a brute-force implementation of discrete TPE
-                        and its gradient.
+                        <strong>Michael Pham:</strong> Mesh data structure,
+                        OpenMesh bridge, normalization, procedural test meshes,
+                        brute-force tangent-point energy, and early gradient
+                        validation infrastructure.
+                    </li>
+                    <li>
+                        <strong>Daniel Liu:</strong> Barnes-Hut TPE
+                        acceleration, Repulsor cross-validation,
+                        Sobolev-preconditioned descent, remeshing, gallery demo
+                        drivers, and Phase 3/4 Repulsive Shells experiments.
+                    </li>
+                    <li>
+                        <strong>Elen Papyan:</strong> Project website/report
+                        structure, visual assets, milestone/final presentation
+                        material, and result organization.
                     </li>
                 </ul>
             </section>
-        </div>
-
-        <script>
-            document
-                .getElementById("dark-toggle")
-                .addEventListener("click", function () {
-                    document.body.classList.toggle("dark");
-                });
-        </script>
+        </main>
     </body>
 </html>

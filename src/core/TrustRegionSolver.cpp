@@ -567,6 +567,10 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
         }
 
         if (energy_params.rigid_rotation_weight > 0.0) {
+            // HVP for E_rot = w·‖L‖² with L = Σ_v b_v × a_v (RS Eq. 27).
+            // δL = Σ_v (db × a + b × da). Then
+            //   H_a v = 2w · (δL × b + L × db),
+            //   H_b v = 2w · (da × L + a × δL).
             const double coeff =
                 scale * energy_params.rigid_rotation_weight * 2.0;
             for (int k = 1; k <= n; ++k) {
@@ -576,23 +580,25 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
                     v_frames[static_cast<size_t>(k - 1)];
                 const Eigen::MatrixXd &vnext =
                     v_frames[static_cast<size_t>(k)];
+                Eigen::Vector3d L = Eigen::Vector3d::Zero();
+                Eigen::Vector3d dL = Eigen::Vector3d::Zero();
                 for (int i = 0; i < nv; ++i) {
                     const Eigen::Vector3d a = prev.V.row(i).transpose();
                     const Eigen::Vector3d b = next.V.row(i).transpose();
                     const Eigen::Vector3d da = vprev.row(i).transpose();
                     const Eigen::Vector3d db = vnext.row(i).transpose();
-                    const double aa = a.squaredNorm();
-                    const double bb = b.squaredNorm();
-                    const double ab = a.dot(b);
-                    const double dab = da.dot(b) + a.dot(db);
+                    L += b.cross(a);
+                    dL += db.cross(a) + b.cross(da);
+                }
+                for (int i = 0; i < nv; ++i) {
+                    const Eigen::Vector3d a = prev.V.row(i).transpose();
+                    const Eigen::Vector3d b = next.V.row(i).transpose();
+                    const Eigen::Vector3d da = vprev.row(i).transpose();
+                    const Eigen::Vector3d db = vnext.row(i).transpose();
                     const Eigen::Vector3d ha =
-                        coeff *
-                        (2.0 * b.dot(db) * a + bb * da -
-                         dab * b - ab * db);
+                        coeff * (dL.cross(b) + L.cross(db));
                     const Eigen::Vector3d hb =
-                        coeff *
-                        (2.0 * a.dot(da) * b + aa * db -
-                         dab * a - ab * da);
+                        coeff * (da.cross(L) + a.cross(dL));
                     h_rigid_frames[static_cast<size_t>(k - 1)].row(i) +=
                         ha.transpose();
                     h_rigid_frames[static_cast<size_t>(k)].row(i) +=

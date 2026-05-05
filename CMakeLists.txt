@@ -181,6 +181,10 @@ add_executable(demo_phase3_ball_tube_interp
     tests/demo_phase3_ball_tube_interp.cpp)
 target_link_libraries(demo_phase3_ball_tube_interp PRIVATE rsh_core)
 
+add_executable(demo_phase3_torus_tube_interp
+    tests/demo_phase3_torus_tube_interp.cpp)
+target_link_libraries(demo_phase3_torus_tube_interp PRIVATE rsh_core)
+
 add_executable(demo_phase3_translated_sphere_path
     tests/demo_phase3_translated_sphere_path.cpp)
 target_link_libraries(demo_phase3_translated_sphere_path PRIVATE rsh_core)
