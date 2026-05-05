@@ -360,9 +360,15 @@
                     We built a CPU/OpenMP-first C++ implementation of major
                     pieces of the <em>Repulsive Shells</em> pipeline, centered
                     on tangent-point repulsion to prevent self-intersections
-                    during shape optimization. The pipeline is staged as
-                    follows:
+                    during shape optimization.
                 </p>
+            </section>
+
+            <section id="approach">
+                <div class="section-num">02: Technical approach</div>
+                <h2>What we implemented, how, and why</h2>
+                The overall rendering pipeline for an object is staged as
+                follows:
                 <ul>
                     <li>
                         <strong>Mesh Representation and Normalization</strong>:
@@ -407,11 +413,6 @@
                     convergence across baseline flow, preconditioned
                     optimization, and compression-style sequence optimization.
                 </p>
-            </section>
-
-            <section id="approach">
-                <div class="section-num">02: Technical approach</div>
-                <h2>What we implemented, how, and why</h2>
 
                 <div class="week">
                     <div class="week-label">Stack</div>
@@ -518,32 +519,6 @@
                         <code>out/phase2_hs_flow/energy.csv</code>, energy drops
                         from 185.402 to 31.4393 over 1000 iterations (83.0%
                         reduction, 5.90x ratio), with long-run stable descent.
-                    </div>
-                </div>
-
-                <p>
-                    <strong>Compression-Style Optimization:</strong> This test
-                    simulates compression by steadily moving the handle vertices
-                    of two separated meshes towards each other over multiple
-                    frames, while relaxing the free vertices using a combination
-                    of TPE and shell energy. The chart plots the energy trend
-                    across the optimization sequence, showing the energy
-                    dropping as the system resolves collisions and minimizes
-                    shell bending.
-                </p>
-
-                <div class="plot">
-                    <img
-                        src="final_assets/compression_energy.svg"
-                        alt="Compression demo energy trend"
-                    />
-                    <div class="plot-caption">
-                        <strong>Compression-style optimization.</strong> In
-                        <code>out/compress_sequence/energy.csv</code>, energy
-                        drops from 0.300655 to 0.200355 over 1345 optimization
-                        records (33.4% reduction, 1.50x ratio). The
-                        <code>used_identity_fallback</code> field remained zero
-                        in this run.
                     </div>
                 </div>
 
