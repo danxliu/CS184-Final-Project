@@ -266,7 +266,9 @@
             <div class="links">
                 <a href="proposal.html">Proposal</a>
                 <a href="milestone.html">Milestone</a>
-                <a href="https://github.com/danxliu/CS184-Final-Project">GitHub repo</a>
+                <a href="https://github.com/danxliu/CS184-Final-Project"
+                    >GitHub repo</a
+                >
             </div>
         </header>
 
@@ -275,31 +277,41 @@
                 <div class="section-num">01: Abstract</div>
                 <h2>Repulsive Surfaces as the completed result</h2>
                 <p>
-                    Our original proposal targeted <em>Repulsive Shells</em>,
-                    a SIGGRAPH 2024 framework for collision-free interpolation
-                    and extrapolation in shape space. During implementation we
-                    found that a paper-faithful graph-manifold shell solver was
-                    too large for the project window, so our final deliverable
-                    focuses on the underlying <em>Repulsive Surfaces</em>
-                    pipeline. We implemented tangent-point energy minimization
-                    on triangle meshes and reproduced the canonical embedding
-                    experiment for genus 0 through 5.
+                    Our original proposal aimed to implement
+                    <em>Repulsive Shells</em>, a recent 2024 paper about
+                    smoothly blending 3D shapes without them passing through
+                    themselves (self-intersecting). However, we realized that
+                    building the full complex mathematical solver required for
+                    this was too large for the timeframe of a class project.
+                    Therefore, our final project focuses on building the
+                    foundational system it relies on, called
+                    <em>Repulsive Surfaces</em>. We successfully implemented an
+                    algorithm that naturally untangles 3D meshes by simulating a
+                    repulsive force, and we tested it by unraveling shapes with
+                    0 to 5 holes (genus 0 through 5).
                 </p>
                 <p>
-                    The completed system minimizes the discrete tangent-point
-                    potential from Repulsive Surfaces, accelerates far-field
-                    interactions with a BVH and block-cluster tree, computes
-                    Sobolev-preconditioned descent directions with GMRES, and
-                    remeshes dynamically to preserve triangle quality. The
-                    final gallery outputs converge from noisy or procedurally
-                    generated inputs to embedded low-energy surfaces.
+                    To make this work efficiently, our system minimizes a
+                    specific energy metric that heavily penalizes parts of the
+                    surface that get too close to intersecting. Because
+                    calculating this repulsive force between every single pair
+                    of triangles on a mesh is too slow, we sped up the process
+                    using hierarchical data structures (a Bounding Volume
+                    Hierarchy and a block-cluster tree) to group distant
+                    triangles together. We also used advanced mathematical
+                    techniques to guide the shape's movement smoothly over time
+                    and added dynamic remeshing (automatically adjusting the
+                    size and shape of the triangles as the surface stretches) to
+                    keep the 3D model clean and stable. Our final results show
+                    how messy or tangled starting shapes smoothly transform into
+                    neat, untangled final surfaces.
                 </p>
                 <div class="note">
-                    Scope changed after the milestone: CUDA and the complete
-                    Repulsive Shells graph-manifold solver became stretch
-                    goals. We still implemented partial shell components, but
-                    the defensible final claim is the Repulsive Surfaces
-                    canonical-embedding reproduction.
+                    Scope changed after the milestone: GPU acceleration (CUDA)
+                    and the complete Repulsive Shells system became stretch
+                    goals. While we implemented some parts of the shell system,
+                    our main completed result is reproducing the Repulsive
+                    Surfaces "untying" experiments.
                 </div>
             </section>
 
@@ -310,14 +322,20 @@
                     For a triangle mesh, we discretize tangent-point energy by
                     midpoint quadrature over ordered pairs of distinct faces:
                 </p>
-                <div class="formula">Phi_hat(x) = sum_{t1 != t2} a1 a2 |dot(n1, c1 - c2)|^6 / ||c1 - c2||^12</div>
+                <div class="formula">
+                    Phi_hat(x) = sum_{t1 != t2} a1 a2 |dot(n1, c1 - c2)|^6 /
+                    ||c1 - c2||^12
+                </div>
                 <p>
                     This potential grows when distant parts of the same surface
                     approach intersection. Minimizing it therefore spreads a
                     surface into an embedded low-energy shape without explicit
                     continuous collision detection.
                 </p>
-                <div class="formula">mesh -> face geometry -> TPE/BVH/BCT -> Hs-preconditioned direction -> line search -> remesh -> frame/energy logs</div>
+                <div class="formula">
+                    mesh -> face geometry -> TPE/BVH/BCT -> Hs-preconditioned
+                    direction -> line search -> remesh -> frame/energy logs
+                </div>
 
                 <div class="step">
                     <div class="step-label">Geometry</div>
@@ -372,9 +390,8 @@
                     trajectories enough to produce visibly different surfaces.
                     Remeshing changed the effective resolution target until we
                     preserved the initial edge length. The practical lesson is
-                    that research graphics code needs exact baselines and
-                    strict regression tests around anything that changes the
-                    objective.
+                    that research graphics code needs exact baselines and strict
+                    regression tests around anything that changes the objective.
                 </p>
             </section>
 
@@ -405,41 +422,55 @@
 
                 <div class="gallery-grid">
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus0_final.png" alt="Final genus 0 surface" />
+                        <img
+                            src="final_assets/gallery_genus0_final.png"
+                            alt="Final genus 0 surface"
+                        />
                         <p><strong>Genus 0.</strong> Sphere-like minimizer.</p>
                     </div>
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus1_final.png" alt="Final genus 1 surface" />
+                        <img
+                            src="final_assets/gallery_genus1_final.png"
+                            alt="Final genus 1 surface"
+                        />
                         <p><strong>Genus 1.</strong> Torus of revolution.</p>
                     </div>
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus2_final.png" alt="Final genus 2 surface" />
-                        <p><strong>Genus 2.</strong> Multi-handle embedded state.</p>
+                        <img
+                            src="final_assets/gallery_genus2_final.png"
+                            alt="Final genus 2 surface"
+                        />
+                        <p>
+                            <strong>Genus 2.</strong> Multi-handle embedded
+                            state.
+                        </p>
                     </div>
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus3_final.png" alt="Final genus 3 surface" />
-                        <p><strong>Genus 3.</strong> Higher-genus spread-out state.</p>
+                        <img
+                            src="final_assets/gallery_genus3_final.png"
+                            alt="Final genus 3 surface"
+                        />
+                        <p>
+                            <strong>Genus 3.</strong> Higher-genus spread-out
+                            state.
+                        </p>
                     </div>
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus4_final.png" alt="Final genus 4 surface" />
+                        <img
+                            src="final_assets/gallery_genus4_final.png"
+                            alt="Final genus 4 surface"
+                        />
                         <p><strong>Genus 4.</strong> Bounded-remesh result.</p>
                     </div>
                     <div class="gallery-card">
-                        <img src="final_assets/gallery_genus5_final.png" alt="Final genus 5 surface" />
-                        <p><strong>Genus 5.</strong> Largest shipped gallery mesh.</p>
-                    </div>
-                </div>
-
-                <div class="plot">
-                    <img
-                        src="final_assets/gallery_energy_absolute.svg"
-                        alt="Log-scale TPE descent curves for genus 0 through 5"
-                    />
-                    <div class="plot-caption">
-                        <strong>Tangent-point potential descent.</strong>
-                        Absolute energies use a log scale because topology and
-                        initialization change the starting potential by orders
-                        of magnitude.
+                        <img
+                            src="final_assets/gallery_genus5_final.png"
+                            alt="Final genus 5 surface"
+                        />
+                        <p>
+                            <strong>Genus 5.</strong> Largest shipped gallery
+                            mesh.
+                        </p>
                     </div>
                 </div>
 
@@ -467,12 +498,48 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr><td>0</td><td>231948</td><td>31.0357</td><td>7473.6x</td><td>1280 -> 1172</td></tr>
-                            <tr><td>1</td><td>1909.6</td><td>913.572</td><td>2.1x</td><td>576 -> 528</td></tr>
-                            <tr><td>2</td><td>43672.8</td><td>1656.33</td><td>26.4x</td><td>720 -> 828</td></tr>
-                            <tr><td>3</td><td>142481</td><td>2353.83</td><td>60.5x</td><td>1080 -> 1242</td></tr>
-                            <tr><td>4</td><td>346503</td><td>4505.47</td><td>76.9x</td><td>1440 -> 1656</td></tr>
-                            <tr><td>5</td><td>701006</td><td>7038.95</td><td>99.6x</td><td>1800 -> 2070</td></tr>
+                            <tr>
+                                <td>0</td>
+                                <td>231948</td>
+                                <td>31.0357</td>
+                                <td>7473.6x</td>
+                                <td>1280 -> 1172</td>
+                            </tr>
+                            <tr>
+                                <td>1</td>
+                                <td>1909.6</td>
+                                <td>913.572</td>
+                                <td>2.1x</td>
+                                <td>576 -> 528</td>
+                            </tr>
+                            <tr>
+                                <td>2</td>
+                                <td>43672.8</td>
+                                <td>1656.33</td>
+                                <td>26.4x</td>
+                                <td>720 -> 828</td>
+                            </tr>
+                            <tr>
+                                <td>3</td>
+                                <td>142481</td>
+                                <td>2353.83</td>
+                                <td>60.5x</td>
+                                <td>1080 -> 1242</td>
+                            </tr>
+                            <tr>
+                                <td>4</td>
+                                <td>346503</td>
+                                <td>4505.47</td>
+                                <td>76.9x</td>
+                                <td>1440 -> 1656</td>
+                            </tr>
+                            <tr>
+                                <td>5</td>
+                                <td>701006</td>
+                                <td>7038.95</td>
+                                <td>99.6x</td>
+                                <td>1800 -> 2070</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -488,79 +555,17 @@
                 <h3>Reference validation</h3>
                 <p>
                     The final meshes were checked against Repulsor's all-pairs
-                    TPE implementation. Representative brute-force parity
-                    ratios were 0.999999999999958 for genus 0,
-                    1.000000000000016 for genus 1, 1.000000000000005 for genus
-                    2, 1.000000000000108 for genus 3, 1.000000000000292 for
-                    genus 4, and 1.000000000000280 for genus 5. This validates
-                    the core TPE kernel independently of our own finite
-                    difference tests.
+                    TPE implementation. Representative brute-force parity ratios
+                    were 0.999999999999958 for genus 0, 1.000000000000016 for
+                    genus 1, 1.000000000000005 for genus 2, 1.000000000000108
+                    for genus 3, 1.000000000000292 for genus 4, and
+                    1.000000000000280 for genus 5. This validates the core TPE
+                    kernel independently of our own finite difference tests.
                 </p>
-
-                <h3>Earlier diagnostics</h3>
-                <p>
-                    We also keep two smaller diagnostic plots in the report.
-                    The first shows the unpreconditioned baseline descending
-                    and stalling; the second shows the smoother
-                    preconditioned-flow behavior that motivated the final
-                    gallery optimizer.
-                </p>
-                <div class="plot">
-                    <img
-                        src="final_assets/phase1_energy.svg"
-                        alt="Phase 1 L2 baseline energy trend"
-                    />
-                    <div class="plot-caption">
-                        <strong>L2 baseline.</strong> Energy drops from
-                        181.414 to 40.9563 over 150 iterations.
-                    </div>
-                </div>
-                <div class="plot">
-                    <img
-                        src="final_assets/phase2_energy.svg"
-                        alt="Phase 2 preconditioned energy trend"
-                    />
-                    <div class="plot-caption">
-                        <strong>Preconditioned flow.</strong> Energy drops from
-                        185.402 to 31.4393 over 1000 iterations.
-                    </div>
-                </div>
-            </section>
-
-            <section id="limitations">
-                <div class="section-num">04: Limitations</div>
-                <h2>What did not make the final claim</h2>
-                <p>
-                    We made real progress toward Repulsive Shells, but not
-                    enough to call the complete graph-manifold interpolation or
-                    extrapolation pipeline reproduced. The elastic shell energy,
-                    adaptive TPE quadrature, path energy, and trust-region
-                    solver exist in the codebase; the remaining gaps are
-                    obstacle barriers, the production cloth-eversion and
-                    ball-through-tube examples, a block-diagonal Steihaug
-                    preconditioner, and the CUDA port.
-                </p>
-                <p>
-                    The compression-style diagnostic below is useful evidence
-                    that the shell pieces interact with TPE and handle pins, but
-                    it is not one of our final named hero demos.
-                </p>
-                <div class="plot">
-                    <img
-                        src="final_assets/compression_energy.svg"
-                        alt="Compression-style shell and TPE diagnostic energy trend"
-                    />
-                    <div class="plot-caption">
-                        <strong>Compression-style diagnostic.</strong> Energy
-                        drops from 0.300655 to 0.200355 over 1345 optimization
-                        records while two pinned-handle surfaces are pushed
-                        toward each other.
-                    </div>
-                </div>
             </section>
 
             <section id="references">
-                <div class="section-num">05: References</div>
+                <div class="section-num">04: References</div>
                 <h2>Papers, code, and tools</h2>
                 <ul>
                     <li>
@@ -573,11 +578,17 @@
                     </li>
                     <li>
                         Strzelecki and von der Mosel (2013).
-                        <em>Tangent-point repulsive potentials for a class of non-smooth sets</em>.
+                        <em
+                            >Tangent-point repulsive potentials for a class of
+                            non-smooth sets</em
+                        >.
                     </li>
                     <li>
                         Meyer, Desbrun, Schroder, Barr (2003).
-                        <em>Discrete Differential-Geometry Operators for Triangulated 2-Manifolds</em>.
+                        <em
+                            >Discrete Differential-Geometry Operators for
+                            Triangulated 2-Manifolds</em
+                        >.
                     </li>
                     <li>
                         Grinspun, Hirani, Desbrun, Schroder (2003).
@@ -592,9 +603,8 @@
                         used for comparison but not vendored into our project.
                     </li>
                     <li>
-                        C++17, CMake, Eigen, OpenMesh, OpenMP,
-                        NanoGUI/OpenGL, Polyscope, and Python/Matplotlib for
-                        report plots.
+                        C++17, CMake, Eigen, OpenMesh, OpenMP, NanoGUI/OpenGL,
+                        Polyscope, and Python/Matplotlib for report plots.
                     </li>
                 </ul>
             </section>
@@ -605,8 +615,8 @@
                 <ul>
                     <li>
                         <strong>Atharv Sampath:</strong> Project scoping,
-                        paper/reference comparison, validation criteria,
-                        visual inspection of gallery and shell demos, and final
+                        paper/reference comparison, validation criteria, visual
+                        inspection of gallery and shell demos, and final
                         presentation/writeup coordination.
                     </li>
                     <li>
