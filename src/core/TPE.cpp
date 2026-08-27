@@ -252,7 +252,12 @@ void append_adaptive_terms_for_face_pair(const MeshData &mesh,
                                          int t1,
                                          int t2,
                                          const TpeAdaptiveParams &adaptive,
+                                         std::size_t max_total_terms,
                                          std::vector<TpeNearFieldTerm> &terms) {
+    auto emit_capped = [&](const SubTriState &s1, const SubTriState &s2) {
+        emit_subtri_term(terms, t1, t2, s1, s2);
+    };
+
     if (faces_adjacent(mesh, t1, t2)) {
         emit_midpoint_term(terms, t1, t2);
         return;
@@ -271,6 +276,7 @@ void append_adaptive_terms_for_face_pair(const MeshData &mesh,
     std::vector<AdaptivePairItem> stack;
     stack.reserve(128);
     stack.push_back({root_subtri(), root_subtri()});
+    const std::size_t pair_term_start = terms.size();
 
     while (!stack.empty()) {
         const AdaptivePairItem item = stack.back();
@@ -290,8 +296,11 @@ void append_adaptive_terms_for_face_pair(const MeshData &mesh,
         const bool depth_cap = item.s1.depth >= max_depth;
         const bool stack_cap =
             static_cast<int>(stack.size()) + 16 > max_stack_items;
-        if (mac_ok || depth_cap || stack_cap) {
-            emit_subtri_term(terms, t1, t2, item.s1, item.s2);
+        const bool total_cap =
+            (terms.size() - pair_term_start) + stack.size() + 16 >
+            max_total_terms;
+        if (mac_ok || depth_cap || stack_cap || total_cap) {
+            emit_capped(item.s1, item.s2);
             continue;
         }
 
@@ -812,6 +821,8 @@ TpeAdaptiveCache build_tpe_adaptive_cache(const MeshData &mesh,
     params.theta = std::max(0.0, params.theta);
     params.max_depth = std::max(0, params.max_depth);
     params.max_stack_items = std::max(16, params.max_stack_items);
+    params.max_total_terms =
+        std::max<std::size_t>(16, params.max_total_terms);
     out.params = params;
 
     for (const ClusterPair &cp : bp.near_field) {
@@ -823,7 +834,9 @@ TpeAdaptiveCache build_tpe_adaptive_cache(const MeshData &mesh,
             for (int j = V.face_start; j < V.face_end; ++j) {
                 const int t2 = bvh.face_indices[j];
                 if (self && t1 == t2) continue;
-                append_adaptive_terms_for_face_pair(mesh, t1, t2, params, out.near_terms);
+                append_adaptive_terms_for_face_pair(
+                    mesh, t1, t2, params, params.max_total_terms,
+                    out.near_terms);
             }
         }
     }

@@ -40,9 +40,6 @@ BALL_TUBE_FIDELITY.md
 .polyscope.ini
 imgui.ini
 
-# WIP local-only demo (not yet ready to track)
-tests/demo_phase3_torus_tube_interp.cpp
-
 # VSCode "Local History" extension snapshots
 .history/
 
@@ -51,3 +48,10 @@ texput.log
 
 # Local-only: mirrors milestone.html -> coherentmonkey.github.io/184/project/
 sync_milestone.sh
+
+# Final video binary lives on coherentmonkey.github.io only, not the project repo
+websites/final_presentation.mp4
+
+# Precomputed Polyscope flow-vector sidecars
+flow_*.vec
+*.flow.vec

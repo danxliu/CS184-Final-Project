@@ -104,6 +104,8 @@ if(RSH_ENABLE_POLYSCOPE)
     if(RSH_DBUS_CANDIDATES)
         list(SORT RSH_DBUS_CANDIDATES)
         list(GET RSH_DBUS_CANDIDATES 0 RSH_DBUS_LIBRARY)
+        get_filename_component(RSH_DBUS_LIBRARY_DIR "${RSH_DBUS_LIBRARY}" DIRECTORY)
+        target_link_directories(polyscope_viewer PRIVATE ${RSH_DBUS_LIBRARY_DIR})
         target_link_libraries(polyscope_viewer PRIVATE ${RSH_DBUS_LIBRARY})
     endif()
 endif()
@@ -167,6 +169,9 @@ target_link_libraries(diagnose_bh_cancellation PRIVATE rsh_core)
 
 add_executable(diagnose_bh_leaf tools/diagnose_bh_leaf.cpp)
 target_link_libraries(diagnose_bh_leaf PRIVATE rsh_core)
+
+add_executable(precompute_tpe_flow tools/precompute_tpe_flow.cpp)
+target_link_libraries(precompute_tpe_flow PRIVATE rsh_core)
 
 # add_executable(demo_interpolation tests/demo_interpolation.cpp)
 # target_link_libraries(demo_interpolation PRIVATE rsh_core)

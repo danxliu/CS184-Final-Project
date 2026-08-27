@@ -5,6 +5,7 @@
 #include "BVH.h"
 #include "FaceGeom.h"
 #include "MeshData.h"
+#include <cstddef>
 #include <vector>
 
 namespace rsh {
@@ -14,6 +15,7 @@ struct TpeAdaptiveParams {
     double theta = 10.0;
     int max_depth = 8;
     int max_stack_items = 262144;
+    std::size_t max_total_terms = 262144;
 };
 
 struct TpeNearFieldTerm {
