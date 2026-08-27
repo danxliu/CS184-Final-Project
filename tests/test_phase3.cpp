@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -351,7 +352,7 @@ void test_surface_tpe_barrier_adaptive_depth0_matches_midpoint() {
 
     const double e_err = std::abs(e_ad - e_mid);
     const double g_err = (g_ad - g_mid).cwiseAbs().maxCoeff();
-    std::cout << "    adaptive terms = " << cache.near_terms.size()
+    std::cout << "    adaptive terms = " << cache.last_adaptive_terms
               << ", |E_ad - E_mid| = " << e_err
               << ", grad max abs err = " << g_err << "\n";
     check(e_err < 1e-10,
@@ -393,7 +394,7 @@ void test_surface_tpe_barrier_adaptive_gradient_fd() {
         x,
         1e-6);
 
-    std::cout << "    adaptive terms = " << cache.near_terms.size()
+    std::cout << "    adaptive terms = " << cache.last_adaptive_terms
               << "\n    max abs err = " << r.max_abs_err
               << ", max rel err = " << r.max_rel_err
               << ", worst index = " << r.worst_index << "\n";
@@ -471,6 +472,50 @@ void test_surface_tpe_barrier_adaptive_near_contact_growth() {
           "surface barrier adaptive response grows faster than midpoint");
 }
 
+void test_surface_tpe_barrier_adaptive_term_cap() {
+    std::cout << "-- surface TPE barrier adaptive term cap --\n";
+
+    MeshData barrier;
+    barrier.V.resize(3, 3);
+    barrier.V << 0.0, 0.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0;
+    barrier.F.resize(1, 3);
+    barrier.F << 0, 1, 2;
+    barrier.L0 = barrier.compute_L0();
+
+    MeshData mesh;
+    mesh.V.resize(3, 3);
+    mesh.V << 0.05, 0.05, 0.025,
+              1.80, 0.05, 1.0,
+              0.05, 1.80, 1.0;
+    mesh.F.resize(1, 3);
+    mesh.F << 0, 1, 2;
+    mesh.L0 = mesh.compute_L0();
+
+    TpeAdaptiveParams adaptive;
+    adaptive.enabled = true;
+    adaptive.theta = 0.5;
+    adaptive.max_depth = 7;
+    adaptive.max_stack_items = 500000;
+    adaptive.max_total_terms = 10;
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.0, adaptive);
+
+    bool threw = false;
+    try {
+        (void)surface_tpe_barrier_energy_bh(mesh, barrier, cache, 6.0);
+    } catch (const std::runtime_error &e) {
+        threw = std::string(e.what()).find("max_total_terms") !=
+                std::string::npos;
+    }
+    std::cout << "    last adaptive terms before cap = "
+              << cache.last_adaptive_terms << "\n";
+    check(threw && cache.last_adaptive_hit_cap &&
+              cache.last_adaptive_terms == adaptive.max_total_terms,
+          "surface barrier adaptive cap throws before unbounded growth");
+}
+
 void test_path_energy_uses_adaptive_surface_tpe_barrier() {
     std::cout << "-- path-energy wires adaptive surface TPE barrier --\n";
     const double alpha = 6.0;
@@ -525,12 +570,13 @@ void test_path_energy_uses_adaptive_surface_tpe_barrier() {
               << ", path adaptive uncached = " << path_ad_uncached
               << ", path adaptive cached = " << path_ad_cached
               << ", direct adaptive = " << direct_ad
-              << ", adaptive terms = " << cache[0].barrier_cache.near_terms.size()
+              << ", adaptive terms = "
+              << cache[0].barrier_cache.last_adaptive_terms
               << "\n";
     check(cache[0].has_barrier_cache &&
               cache[0].barrier_cache.has_adaptive &&
-              !cache[0].barrier_cache.near_terms.empty(),
-          "path-energy barrier cache contains adaptive cross terms");
+              cache[0].barrier_cache.last_adaptive_terms > 0,
+          "path-energy barrier cache streams adaptive cross terms");
     check(path_ad_uncached > path_mid * 1.1,
           "path-energy uncached surface barrier uses adaptive quadrature");
     check(std::abs(path_ad_cached - direct_ad) <=
@@ -762,6 +808,7 @@ int main() {
     test_surface_tpe_barrier_adaptive_depth0_matches_midpoint();
     test_surface_tpe_barrier_adaptive_gradient_fd();
     test_surface_tpe_barrier_adaptive_near_contact_growth();
+    test_surface_tpe_barrier_adaptive_term_cap();
     test_path_energy_uses_adaptive_surface_tpe_barrier();
     test_barrier_divergence();
     test_path_energy_with_obstacle();

@@ -40,9 +40,6 @@ BALL_TUBE_FIDELITY.md
 .polyscope.ini
 imgui.ini
 
-# WIP local-only demo (not yet ready to track)
-tests/demo_phase3_torus_tube_interp.cpp
-
 # VSCode "Local History" extension snapshots
 .history/
 

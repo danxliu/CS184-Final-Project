@@ -8,7 +8,7 @@
 #include "TPE.h"
 
 #include <Eigen/Dense>
-#include <vector>
+#include <cstddef>
 
 namespace rsh {
 
@@ -18,7 +18,10 @@ struct SurfaceBarrierCache {
     BVH barrier_bvh;
     BlockPairs bp;
     TpeAdaptiveParams adaptive;
-    std::vector<TpeNearFieldTerm> near_terms;
+    Eigen::MatrixXd adaptive_reference_vertices;
+    std::size_t near_leaf_face_pairs = 0;
+    mutable std::size_t last_adaptive_terms = 0;
+    mutable bool last_adaptive_hit_cap = false;
     double theta = 0.5;
     bool has_adaptive = false;
 };

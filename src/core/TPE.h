@@ -5,6 +5,7 @@
 #include "BVH.h"
 #include "FaceGeom.h"
 #include "MeshData.h"
+#include <cstddef>
 #include <vector>
 
 namespace rsh {
@@ -14,6 +15,9 @@ struct TpeAdaptiveParams {
     double theta = 10.0;
     int max_depth = 8;
     int max_stack_items = 262144;
+    // Barrier adaptive quadrature streams subterms on demand and enforces this
+    // per-frame cap so near-contact cases fail before exhausting memory.
+    std::size_t max_total_terms = 2000000;
 };
 
 struct TpeNearFieldTerm {

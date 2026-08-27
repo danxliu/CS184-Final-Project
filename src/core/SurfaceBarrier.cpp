@@ -7,6 +7,9 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -28,6 +31,13 @@ struct AdaptivePairItem {
 
 inline Vec3 face_vertex(const MeshData &mesh, int t, int k) {
     return mesh.V.row(mesh.F(t, k));
+}
+
+inline Vec3 face_vertex(const MeshData &mesh,
+                        const Eigen::MatrixXd &V,
+                        int t,
+                        int k) {
+    return V.row(mesh.F(t, k));
 }
 
 Vec3 bary_blend(const std::array<Vec3, 3> &tri, const Vec3 &bary) {
@@ -202,11 +212,10 @@ Vec3 subtri_centroid_weights(const SubTriState &sub) {
     return (sub.bary[0] + sub.bary[1] + sub.bary[2]) / 3.0;
 }
 
-void emit_subtri_term(std::vector<TpeNearFieldTerm> &terms,
-                      int tm,
-                      int tb,
-                      const SubTriState &moving,
-                      const SubTriState &barrier) {
+TpeNearFieldTerm make_subtri_term(int tm,
+                                  int tb,
+                                  const SubTriState &moving,
+                                  const SubTriState &barrier) {
     TpeNearFieldTerm term;
     term.t1 = tm;
     term.t2 = tb;
@@ -214,19 +223,37 @@ void emit_subtri_term(std::vector<TpeNearFieldTerm> &terms,
     term.w2 = subtri_centroid_weights(barrier);
     term.area_scale_1 = moving.area_scale;
     term.area_scale_2 = barrier.area_scale;
-    terms.push_back(term);
+    return term;
 }
 
-void append_adaptive_terms_for_cross_face_pair(
+std::runtime_error adaptive_term_cap_error(std::size_t cap,
+                                           std::size_t emitted,
+                                           int tm,
+                                           int tb) {
+    std::ostringstream oss;
+    oss << "surface TPE barrier adaptive quadrature exceeded "
+        << "max_total_terms=" << cap
+        << " while streaming near-field terms"
+        << " (emitted=" << emitted
+        << ", moving_face=" << tm
+        << ", barrier_face=" << tb << ")";
+    return std::runtime_error(oss.str());
+}
+
+template <typename Emit>
+void stream_adaptive_terms_for_cross_face_pair(
     const MeshData &mesh,
+    const Eigen::MatrixXd &reference_vertices,
     const MeshData &barrier,
     int tm,
     int tb,
     const TpeAdaptiveParams &adaptive,
-    std::vector<TpeNearFieldTerm> &terms) {
+    std::size_t &term_count,
+    Emit &&emit) {
     const std::array<Vec3, 3> parent_m = {
-        face_vertex(mesh, tm, 0), face_vertex(mesh, tm, 1),
-        face_vertex(mesh, tm, 2)};
+        face_vertex(mesh, reference_vertices, tm, 0),
+        face_vertex(mesh, reference_vertices, tm, 1),
+        face_vertex(mesh, reference_vertices, tm, 2)};
     const std::array<Vec3, 3> parent_b = {
         face_vertex(barrier, tb, 0), face_vertex(barrier, tb, 1),
         face_vertex(barrier, tb, 2)};
@@ -258,7 +285,12 @@ void append_adaptive_terms_for_cross_face_pair(
         const bool stack_cap =
             static_cast<int>(stack.size()) + 16 > max_stack_items;
         if (mac_ok || depth_cap || stack_cap) {
-            emit_subtri_term(terms, tm, tb, item.moving, item.barrier);
+            if (term_count >= adaptive.max_total_terms) {
+                throw adaptive_term_cap_error(
+                    adaptive.max_total_terms, term_count, tm, tb);
+            }
+            ++term_count;
+            emit(make_subtri_term(tm, tb, item.moving, item.barrier));
             continue;
         }
 
@@ -582,36 +614,80 @@ double nearfield_energy(const FaceGeom &gm,
     return phi;
 }
 
-double adaptive_nearfield_energy(const MeshData &mesh,
-                                 const MeshData &barrier,
-                                 const FaceGeom &gm,
-                                 const FaceGeom &gb,
-                                 const std::vector<TpeNearFieldTerm> &terms,
-                                 double alpha) {
-    const int n_terms = static_cast<int>(terms.size());
-    const int lanes = canonical_reduction_lanes();
-    std::vector<double> partial(static_cast<size_t>(lanes), 0.0);
-#pragma omp parallel for schedule(static)
-    for (int lane = 0; lane < lanes; ++lane) {
-        const IndexRange range =
-            canonical_static_range(n_terms, lane, lanes);
-        double local = 0.0;
-        for (int term_idx = range.begin; term_idx < range.end; ++term_idx) {
-            const TpeNearFieldTerm &term =
-                terms[static_cast<size_t>(term_idx)];
-            const Vec3 cm = weighted_face_point(mesh, term.t1, term.w1);
-            const Vec3 cb = weighted_face_point(barrier, term.t2, term.w2);
-            const Vec3 nm = gm.N.row(term.t1);
-            const Vec3 nb = gb.N.row(term.t2);
-            const double am = term.area_scale_1 * gm.A(term.t1);
-            const double ab = term.area_scale_2 * gb.A(term.t2);
-            local += ordered_tpe_term(am, ab, cm, cb, nm, alpha);
-            local += ordered_tpe_term(ab, am, cb, cm, nb, alpha);
-        }
-        partial[static_cast<size_t>(lane)] = local;
+std::size_t count_nearfield_face_pairs(const BVH &moving_bvh,
+                                       const BVH &barrier_bvh,
+                                       const BlockPairs &bp) {
+    std::size_t count = 0;
+    for (const ClusterPair &cp : bp.near_field) {
+        const BVHNode &U = moving_bvh.nodes[cp.u];
+        const BVHNode &V = barrier_bvh.nodes[cp.v];
+        count += static_cast<std::size_t>(U.face_end - U.face_start) *
+                 static_cast<std::size_t>(V.face_end - V.face_start);
     }
+    return count;
+}
+
+const Eigen::MatrixXd &adaptive_reference_vertices(
+    const MeshData &mesh,
+    const SurfaceBarrierCache &cache) {
+    if (cache.adaptive_reference_vertices.rows() == mesh.n_vertices() &&
+        cache.adaptive_reference_vertices.cols() == 3) {
+        return cache.adaptive_reference_vertices;
+    }
+    return mesh.V;
+}
+
+double adaptive_cross_term_energy(const MeshData &mesh,
+                                  const MeshData &barrier,
+                                  const FaceGeom &gm,
+                                  const FaceGeom &gb,
+                                  const TpeNearFieldTerm &term,
+                                  double alpha) {
+    const Vec3 cm = weighted_face_point(mesh, term.t1, term.w1);
+    const Vec3 cb = weighted_face_point(barrier, term.t2, term.w2);
+    const Vec3 nm = gm.N.row(term.t1);
+    const Vec3 nb = gb.N.row(term.t2);
+    const double am = term.area_scale_1 * gm.A(term.t1);
+    const double ab = term.area_scale_2 * gb.A(term.t2);
+    return ordered_tpe_term(am, ab, cm, cb, nm, alpha) +
+           ordered_tpe_term(ab, am, cb, cm, nb, alpha);
+}
+
+double adaptive_nearfield_energy_streaming(const MeshData &mesh,
+                                           const MeshData &barrier,
+                                           const FaceGeom &gm,
+                                           const FaceGeom &gb,
+                                           const SurfaceBarrierCache &cache,
+                                           double alpha) {
+    const Eigen::MatrixXd &reference_vertices =
+        adaptive_reference_vertices(mesh, cache);
+    std::size_t term_count = 0;
     double phi = 0.0;
-    for (double p : partial) phi += p;
+    cache.last_adaptive_hit_cap = false;
+    try {
+        for (const ClusterPair &cp : cache.bp.near_field) {
+            const BVHNode &U = cache.moving_bvh.nodes[cp.u];
+            const BVHNode &V = cache.barrier_bvh.nodes[cp.v];
+            for (int i = U.face_start; i < U.face_end; ++i) {
+                const int tm = cache.moving_bvh.face_indices[i];
+                for (int j = V.face_start; j < V.face_end; ++j) {
+                    const int tb = cache.barrier_bvh.face_indices[j];
+                    stream_adaptive_terms_for_cross_face_pair(
+                        mesh, reference_vertices, barrier, tm, tb,
+                        cache.adaptive, term_count,
+                        [&](const TpeNearFieldTerm &term) {
+                            phi += adaptive_cross_term_energy(
+                                mesh, barrier, gm, gb, term, alpha);
+                        });
+                }
+            }
+        }
+    } catch (...) {
+        cache.last_adaptive_terms = term_count;
+        cache.last_adaptive_hit_cap = true;
+        throw;
+    }
+    cache.last_adaptive_terms = term_count;
     return phi;
 }
 
@@ -723,37 +799,43 @@ void accumulate_adaptive_cross_term_gradient(
     }
 }
 
-void accumulate_adaptive_nearfield_gradient(
+void accumulate_adaptive_nearfield_gradient_streaming(
     const MeshData &mesh,
     const MeshData &barrier,
     const FaceGeom &gm,
     const FaceGeom &gb,
-    const std::vector<TpeNearFieldTerm> &terms,
+    const SurfaceBarrierCache &cache,
     double alpha,
     const std::vector<std::array<Vec3, 3>> &E,
     Eigen::MatrixXd &G) {
-    const int lanes = canonical_reduction_lanes();
-    std::vector<Eigen::MatrixXd> tls_G;
-    tls_G.reserve(static_cast<size_t>(lanes));
-    for (int tid = 0; tid < lanes; ++tid) {
-        tls_G.push_back(Eigen::MatrixXd::Zero(G.rows(), G.cols()));
-    }
-
-    const int n_terms = static_cast<int>(terms.size());
-#pragma omp parallel for schedule(static)
-    for (int lane = 0; lane < lanes; ++lane) {
-        Eigen::MatrixXd &G_local = tls_G[static_cast<size_t>(lane)];
-        const IndexRange range =
-            canonical_static_range(n_terms, lane, lanes);
-        for (int term_idx = range.begin; term_idx < range.end; ++term_idx) {
-            accumulate_adaptive_cross_term_gradient(
-                mesh, barrier, gm, gb, E,
-                terms[static_cast<size_t>(term_idx)], alpha, G_local);
+    const Eigen::MatrixXd &reference_vertices =
+        adaptive_reference_vertices(mesh, cache);
+    std::size_t term_count = 0;
+    cache.last_adaptive_hit_cap = false;
+    try {
+        for (const ClusterPair &cp : cache.bp.near_field) {
+            const BVHNode &U = cache.moving_bvh.nodes[cp.u];
+            const BVHNode &V = cache.barrier_bvh.nodes[cp.v];
+            for (int i = U.face_start; i < U.face_end; ++i) {
+                const int tm = cache.moving_bvh.face_indices[i];
+                for (int j = V.face_start; j < V.face_end; ++j) {
+                    const int tb = cache.barrier_bvh.face_indices[j];
+                    stream_adaptive_terms_for_cross_face_pair(
+                        mesh, reference_vertices, barrier, tm, tb,
+                        cache.adaptive, term_count,
+                        [&](const TpeNearFieldTerm &term) {
+                            accumulate_adaptive_cross_term_gradient(
+                                mesh, barrier, gm, gb, E, term, alpha, G);
+                        });
+                }
+            }
         }
+    } catch (...) {
+        cache.last_adaptive_terms = term_count;
+        cache.last_adaptive_hit_cap = true;
+        throw;
     }
-    for (int tid = 0; tid < lanes; ++tid) {
-        G += tls_G[static_cast<size_t>(tid)];
-    }
+    cache.last_adaptive_terms = term_count;
 }
 
 } // namespace
@@ -811,24 +893,16 @@ SurfaceBarrierCache build_surface_tpe_barrier_cache(
     out.bp = build_bct_cross(out.moving_bvh, out.barrier_bvh, theta);
     out.theta = theta;
     out.adaptive = adaptive;
+    out.near_leaf_face_pairs =
+        count_nearfield_face_pairs(out.moving_bvh, out.barrier_bvh, out.bp);
     if (adaptive.enabled) {
+        out.adaptive_reference_vertices = mesh.V;
         out.adaptive.theta = std::max(0.0, adaptive.theta);
         out.adaptive.max_depth = std::max(0, adaptive.max_depth);
         out.adaptive.max_stack_items =
             std::max(16, adaptive.max_stack_items);
-        for (const ClusterPair &cp : out.bp.near_field) {
-            const BVHNode &U = out.moving_bvh.nodes[cp.u];
-            const BVHNode &V = out.barrier_bvh.nodes[cp.v];
-            for (int i = U.face_start; i < U.face_end; ++i) {
-                const int tm = out.moving_bvh.face_indices[i];
-                for (int j = V.face_start; j < V.face_end; ++j) {
-                    const int tb = out.barrier_bvh.face_indices[j];
-                    append_adaptive_terms_for_cross_face_pair(
-                        mesh, barrier, tm, tb, out.adaptive,
-                        out.near_terms);
-                }
-            }
-        }
+        out.adaptive.max_total_terms =
+            std::max<std::size_t>(1, adaptive.max_total_terms);
         out.has_adaptive = true;
     }
     return out;
@@ -845,8 +919,8 @@ double surface_tpe_barrier_energy_bh(
     double phi =
         admissible_energy(moving_bvh, cache.barrier_bvh, cache.bp, alpha);
     if (cache.has_adaptive && cache.adaptive.enabled) {
-        phi += adaptive_nearfield_energy(mesh, barrier, gm, cache.barrier_geom,
-                                         cache.near_terms, alpha);
+        phi += adaptive_nearfield_energy_streaming(
+            mesh, barrier, gm, cache.barrier_geom, cache, alpha);
     } else {
         phi += nearfield_energy(gm, cache.barrier_geom, moving_bvh,
                                 cache.barrier_bvh, cache.bp, alpha);
@@ -868,9 +942,8 @@ Eigen::MatrixXd surface_tpe_barrier_gradient_bh(
     accumulate_admissible_gradient(mesh, gm, moving_bvh, cache.barrier_bvh,
                                    cache.bp, alpha, E, G);
     if (cache.has_adaptive && cache.adaptive.enabled) {
-        accumulate_adaptive_nearfield_gradient(
-            mesh, barrier, gm, cache.barrier_geom, cache.near_terms, alpha, E,
-            G);
+        accumulate_adaptive_nearfield_gradient_streaming(
+            mesh, barrier, gm, cache.barrier_geom, cache, alpha, E, G);
     } else {
         accumulate_nearfield_gradient(mesh, gm, cache.barrier_geom, moving_bvh,
                                       cache.barrier_bvh, cache.bp, alpha, E, G);
