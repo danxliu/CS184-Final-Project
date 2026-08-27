@@ -17,23 +17,21 @@ struct PathEnergyParams {
     ShellEnergyParams shell;
     double tpe_alpha = 6.0;
     double tpe_theta = 0.5;
-    // RS Eq. 5 graph-metric strength beta. The graph contribution to each
-    // path segment is graph_beta * (Phi_total(x_{k-1}) - Phi_total(x_k))^2.
+    // Global graph-metric strength. The official Repulsive Shells demo uses
+    // separate graph coordinates for self TPE and obstacle TPE, then weights
+    // their squared path differences independently.
     double graph_beta = 1.0;
+    // Repulsor's "innerWeight": scales raw TPE values before differencing.
+    double tpe_inner_weight = 1.0;
+    // Weight of the self-TPE graph coordinate.
     double self_tpe_weight = 1.0;
     TpeAdaptiveParams tpe_adaptive;
-    // Optional fixed obstacle surface. When non-null, a symmetrized
-    // surface-to-surface tangent-point barrier Phi_barrier is added to the
-    // graph-manifold potential:
-    //   Phi_total = TPE + tpe_barrier_weight * Phi_barrier.
-    // This matches the RS Fig. 4 "barrier with a hole" treatment more closely
-    // than a vertex SDF penalty.
+    // Optional fixed obstacle surface. This is a separate graph coordinate,
+    // not added into the self-TPE coordinate before squaring.
     const MeshData *tpe_barrier_mesh = nullptr;
     double tpe_barrier_weight = 1.0;
-    // Optional analytic obstacle. When non-null, its vertex barrier is added
-    // to the graph-manifold potential:
-    //   Phi_total = TPE + obstacle_weight * Phi_obstacle.
-    // It is not an ordinary additive force term in the path energy.
+    // Optional analytic obstacle guard. This also lives as its own graph
+    // coordinate when enabled; the paper demo leaves it disabled.
     const Obstacle *obstacle = nullptr;
     double obstacle_weight = 1.0;
     // RS Section 7.4.3 rigid-motion terms. The shell metric factors out rigid
@@ -53,15 +51,24 @@ struct PathEnergyTermBreakdown {
 
 struct PathEnergyResult {
     PathEnergyTermBreakdown terms;
-    // Per-frame total graph potential Phi_total, not raw TPE.
+    // Compatibility aggregate for older scalar-Phi callers. Coordinates are
+    // sqrt-weighted so a single active coordinate preserves the same weighted
+    // squared difference as the vector graph energy. New code should prefer
+    // the coordinate-specific arrays below.
     std::vector<double> phi_per_frame;
+    std::vector<double> self_phi_per_frame;
+    std::vector<double> barrier_phi_per_frame;
+    std::vector<double> obstacle_phi_per_frame;
 };
 
 struct PathEnergyGradientResult {
     PathEnergyResult energy;
     std::vector<Eigen::MatrixXd> grad_frames;  // dE / d x_k
-    // dPhi_total / d x_k.
+    // Compatibility aggregate gradient matching phi_per_frame.
     std::vector<Eigen::MatrixXd> grad_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_self_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_barrier_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_obstacle_phi_per_frame;
 };
 
 struct PathEnergyFrameCache {
@@ -79,10 +86,9 @@ std::vector<PathEnergyFrameCache> build_path_energy_frame_cache(
     const std::vector<MeshData> &frames,
     const PathEnergyParams &params = PathEnergyParams());
 
-// Discrete path energy (RS Eq. 6 + Eq. 17 approximation):
-// E_hat(x0..xn) = n * sum_k [
-//   W_c(x_{k-1}, x_k) + beta (Phi(x_{k-1}) - Phi(x_k))^2
-// ].
+// Discrete path energy (RS Eq. 6 + Eq. 17 approximation). Self TPE,
+// fixed-surface TPE, and optional SDF guards are separate graph coordinates;
+// they are not summed into one Phi before squaring.
 PathEnergyResult path_energy(
     const std::vector<MeshData> &frames,
     const PathEnergyParams &params = PathEnergyParams(),

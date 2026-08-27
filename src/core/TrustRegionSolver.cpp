@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <vector>
 
@@ -387,7 +388,13 @@ struct ModelEval {
     double energy = 0.0;
     Eigen::VectorXd grad;
     std::vector<double> phi_per_frame;
+    std::vector<double> self_phi_per_frame;
+    std::vector<double> barrier_phi_per_frame;
+    std::vector<double> obstacle_phi_per_frame;
     std::vector<Eigen::MatrixXd> grad_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_self_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_barrier_phi_per_frame;
+    std::vector<Eigen::MatrixXd> grad_obstacle_phi_per_frame;
 };
 
 ModelEval eval_model(
@@ -401,7 +408,13 @@ ModelEval eval_model(
     out.energy = pr.energy.terms.total;
     out.grad = pack_interior_gradient(pr, tr_params);
     out.phi_per_frame = pr.energy.phi_per_frame;
+    out.self_phi_per_frame = pr.energy.self_phi_per_frame;
+    out.barrier_phi_per_frame = pr.energy.barrier_phi_per_frame;
+    out.obstacle_phi_per_frame = pr.energy.obstacle_phi_per_frame;
     out.grad_phi_per_frame = pr.grad_phi_per_frame;
+    out.grad_self_phi_per_frame = pr.grad_self_phi_per_frame;
+    out.grad_barrier_phi_per_frame = pr.grad_barrier_phi_per_frame;
+    out.grad_obstacle_phi_per_frame = pr.grad_obstacle_phi_per_frame;
     return out;
 }
 
@@ -420,7 +433,6 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
     const int nv = frames[0].n_vertices();
     int opt_frames = tr_params.optimize_end_frame ? n : (n - 1);
     
-    std::vector<double> w(static_cast<size_t>(n + 1), 0.0);
     std::vector<Eigen::MatrixXd> v_frames(static_cast<size_t>(n + 1), Eigen::MatrixXd::Zero(nv, 3));
     int off = 0;
     for (int k = 1; k <= opt_frames; ++k) {
@@ -431,39 +443,71 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
             }
         }
     }
-    
-    for (int k = 1; k <= n; ++k) {
-        const int km1 = k - 1;
-        double dot_km1 = 0.0;
-        double dot_k = 0.0;
-        if (km1 > 0 && km1 <= opt_frames) {
-            dot_km1 = (cur.grad_phi_per_frame[static_cast<size_t>(km1)].array() * v_frames[static_cast<size_t>(km1)].array()).sum();
-        }
-        if (k > 0 && k <= opt_frames) {
-            dot_k = (cur.grad_phi_per_frame[static_cast<size_t>(k)].array() * v_frames[static_cast<size_t>(k)].array()).sum();
-        }
-        w[static_cast<size_t>(k)] = dot_km1 - dot_k;
-    }
-    
-    std::vector<Eigen::MatrixXd> h_gn_frames(static_cast<size_t>(n + 1), Eigen::MatrixXd::Zero(nv, 3));
-    for (int i = 1; i <= opt_frames; ++i) {
-        double w_next = (i < n) ? w[static_cast<size_t>(i + 1)] : 0.0;
-        double w_curr = w[static_cast<size_t>(i)];
-        h_gn_frames[static_cast<size_t>(i)] = cur.grad_phi_per_frame[static_cast<size_t>(i)] * (w_next - w_curr);
-    }
-    
-    Eigen::VectorXd h_gn_vec = Eigen::VectorXd::Zero(v.size());
-    off = 0;
-    for (int i = 1; i <= opt_frames; ++i) {
-        for (int j = 0; j < nv; ++j) {
-            if (tr_params.free_vertices.empty() || tr_params.free_vertices[j]) {
-                h_gn_vec.segment<3>(off) = h_gn_frames[static_cast<size_t>(i)].row(j).transpose();
-                off += 3;
+
+    auto pack_frame_mats = [&](const std::vector<Eigen::MatrixXd> &mats) {
+        Eigen::VectorXd out = Eigen::VectorXd::Zero(v.size());
+        int local_off = 0;
+        for (int i = 1; i <= opt_frames; ++i) {
+            for (int j = 0; j < nv; ++j) {
+                if (tr_params.free_vertices.empty() ||
+                    tr_params.free_vertices[j]) {
+                    out.segment<3>(local_off) =
+                        mats[static_cast<size_t>(i)].row(j).transpose();
+                    local_off += 3;
+                }
             }
         }
+        return out;
+    };
+
+    auto add_graph_gn = [&](double coord_weight,
+                            const std::vector<Eigen::MatrixXd> &grad_phi) {
+        if (coord_weight == 0.0 || grad_phi.empty()) return;
+        std::vector<double> directional_delta(static_cast<size_t>(n + 1),
+                                              0.0);
+        for (int k = 1; k <= n; ++k) {
+            const int km1 = k - 1;
+            double dot_km1 = 0.0;
+            double dot_k = 0.0;
+            if (km1 > 0 && km1 <= opt_frames) {
+                dot_km1 =
+                    (grad_phi[static_cast<size_t>(km1)].array() *
+                     v_frames[static_cast<size_t>(km1)].array())
+                        .sum();
+            }
+            if (k > 0 && k <= opt_frames) {
+                dot_k =
+                    (grad_phi[static_cast<size_t>(k)].array() *
+                     v_frames[static_cast<size_t>(k)].array())
+                        .sum();
+            }
+            directional_delta[static_cast<size_t>(k)] = dot_km1 - dot_k;
+        }
+
+        std::vector<Eigen::MatrixXd> h_gn_frames(
+            static_cast<size_t>(n + 1), Eigen::MatrixXd::Zero(nv, 3));
+        for (int i = 1; i <= opt_frames; ++i) {
+            const double w_next =
+                (i < n) ? directional_delta[static_cast<size_t>(i + 1)] : 0.0;
+            const double w_curr = directional_delta[static_cast<size_t>(i)];
+            h_gn_frames[static_cast<size_t>(i)] =
+                grad_phi[static_cast<size_t>(i)] * (w_next - w_curr);
+        }
+
+        Hs += scale * energy_params.graph_beta * coord_weight * 2.0 *
+              pack_frame_mats(h_gn_frames);
+    };
+
+    add_graph_gn(energy_params.self_tpe_weight,
+                 cur.grad_self_phi_per_frame);
+    if (energy_params.tpe_barrier_mesh != nullptr) {
+        add_graph_gn(energy_params.tpe_barrier_weight,
+                     cur.grad_barrier_phi_per_frame);
     }
-    
-    Hs += scale * energy_params.graph_beta * 2.0 * h_gn_vec;
+    if (energy_params.obstacle != nullptr) {
+        add_graph_gn(energy_params.obstacle_weight,
+                     cur.grad_obstacle_phi_per_frame);
+    }
 
     if (tr_params.use_graph_residual_hessian &&
         energy_params.graph_beta != 0.0 &&
@@ -493,46 +537,62 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
                     path_energy_with_gradient(minus, energy_params,
                                               &frame_cache);
 
-                std::vector<double> dphi(static_cast<size_t>(n + 1), 0.0);
-                for (int k = 1; k <= n; ++k) {
-                    dphi[static_cast<size_t>(k)] =
-                        cur.phi_per_frame[static_cast<size_t>(k - 1)] -
-                        cur.phi_per_frame[static_cast<size_t>(k)];
-                }
-
-                std::vector<Eigen::MatrixXd> h_res_frames(
-                    static_cast<size_t>(n + 1),
-                    Eigen::MatrixXd::Zero(nv, 3));
                 const double inv_2h = 0.5 / h;
-                for (int i = 1; i <= opt_frames; ++i) {
-                    const double d_next =
-                        (i < n) ? dphi[static_cast<size_t>(i + 1)] : 0.0;
-                    const double d_curr = dphi[static_cast<size_t>(i)];
-                    const double residual_coeff = d_next - d_curr;
-                    if (residual_coeff == 0.0) {
-                        continue;
-                    }
-                    h_res_frames[static_cast<size_t>(i)] =
-                        residual_coeff * inv_2h *
-                        (gp.grad_phi_per_frame[static_cast<size_t>(i)] -
-                         gm.grad_phi_per_frame[static_cast<size_t>(i)]);
-                }
-
-                Eigen::VectorXd h_res_vec = Eigen::VectorXd::Zero(v.size());
-                off = 0;
-                for (int i = 1; i <= opt_frames; ++i) {
-                    for (int j = 0; j < nv; ++j) {
-                        if (tr_params.free_vertices.empty() ||
-                            tr_params.free_vertices[j]) {
-                            h_res_vec.segment<3>(off) =
-                                h_res_frames[static_cast<size_t>(i)]
-                                    .row(j)
-                                    .transpose();
-                            off += 3;
+                auto add_graph_residual =
+                    [&](double coord_weight,
+                        const std::vector<double> &phi,
+                        const std::vector<Eigen::MatrixXd> &gp_grad,
+                        const std::vector<Eigen::MatrixXd> &gm_grad) {
+                        if (coord_weight == 0.0 || phi.empty()) return;
+                        std::vector<double> dphi(static_cast<size_t>(n + 1),
+                                                 0.0);
+                        for (int k = 1; k <= n; ++k) {
+                            dphi[static_cast<size_t>(k)] =
+                                phi[static_cast<size_t>(k - 1)] -
+                                phi[static_cast<size_t>(k)];
                         }
-                    }
+
+                        std::vector<Eigen::MatrixXd> h_res_frames(
+                            static_cast<size_t>(n + 1),
+                            Eigen::MatrixXd::Zero(nv, 3));
+                        for (int i = 1; i <= opt_frames; ++i) {
+                            const double d_next =
+                                (i < n)
+                                    ? dphi[static_cast<size_t>(i + 1)]
+                                    : 0.0;
+                            const double d_curr =
+                                dphi[static_cast<size_t>(i)];
+                            const double residual_coeff = d_next - d_curr;
+                            if (residual_coeff == 0.0) continue;
+                            h_res_frames[static_cast<size_t>(i)] =
+                                residual_coeff * inv_2h *
+                                (gp_grad[static_cast<size_t>(i)] -
+                                 gm_grad[static_cast<size_t>(i)]);
+                        }
+
+                        Hs += scale * energy_params.graph_beta *
+                              coord_weight * 2.0 *
+                              pack_frame_mats(h_res_frames);
+                    };
+
+                add_graph_residual(
+                    energy_params.self_tpe_weight, cur.self_phi_per_frame,
+                    gp.grad_self_phi_per_frame,
+                    gm.grad_self_phi_per_frame);
+                if (energy_params.tpe_barrier_mesh != nullptr) {
+                    add_graph_residual(
+                        energy_params.tpe_barrier_weight,
+                        cur.barrier_phi_per_frame,
+                        gp.grad_barrier_phi_per_frame,
+                        gm.grad_barrier_phi_per_frame);
                 }
-                Hs += scale * energy_params.graph_beta * 2.0 * h_res_vec;
+                if (energy_params.obstacle != nullptr) {
+                    add_graph_residual(
+                        energy_params.obstacle_weight,
+                        cur.obstacle_phi_per_frame,
+                        gp.grad_obstacle_phi_per_frame,
+                        gm.grad_obstacle_phi_per_frame);
+                }
             }
         }
     }
@@ -567,12 +627,11 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
         }
 
         if (energy_params.rigid_rotation_weight > 0.0) {
-            // HVP for E_rot = w·‖L‖² with L = Σ_v b_v × a_v (RS Eq. 27).
-            // δL = Σ_v (db × a + b × da). Then
-            //   H_a v = 2w · (δL × b + L × db),
-            //   H_b v = 2w · (da × L + a × δL).
+            // Official implementation uses one averaged net moment per segment:
+            // M = mean_v(b_v x a_v).
             const double coeff =
-                scale * energy_params.rigid_rotation_weight * 2.0;
+                scale * energy_params.rigid_rotation_weight * 2.0 /
+                static_cast<double>(nv);
             for (int k = 1; k <= n; ++k) {
                 const MeshData &prev = frames[static_cast<size_t>(k - 1)];
                 const MeshData &next = frames[static_cast<size_t>(k)];
@@ -580,25 +639,27 @@ Eigen::VectorXd hvp(const std::vector<MeshData> &frames,
                     v_frames[static_cast<size_t>(k - 1)];
                 const Eigen::MatrixXd &vnext =
                     v_frames[static_cast<size_t>(k)];
-                Eigen::Vector3d L = Eigen::Vector3d::Zero();
-                Eigen::Vector3d dL = Eigen::Vector3d::Zero();
+                Eigen::Vector3d moment = Eigen::Vector3d::Zero();
+                Eigen::Vector3d dmoment = Eigen::Vector3d::Zero();
                 for (int i = 0; i < nv; ++i) {
                     const Eigen::Vector3d a = prev.V.row(i).transpose();
                     const Eigen::Vector3d b = next.V.row(i).transpose();
                     const Eigen::Vector3d da = vprev.row(i).transpose();
                     const Eigen::Vector3d db = vnext.row(i).transpose();
-                    L += b.cross(a);
-                    dL += db.cross(a) + b.cross(da);
+                    moment += b.cross(a);
+                    dmoment += db.cross(a) + b.cross(da);
                 }
+                moment /= static_cast<double>(nv);
+                dmoment /= static_cast<double>(nv);
                 for (int i = 0; i < nv; ++i) {
                     const Eigen::Vector3d a = prev.V.row(i).transpose();
                     const Eigen::Vector3d b = next.V.row(i).transpose();
                     const Eigen::Vector3d da = vprev.row(i).transpose();
                     const Eigen::Vector3d db = vnext.row(i).transpose();
                     const Eigen::Vector3d ha =
-                        coeff * (dL.cross(b) + L.cross(db));
+                        coeff * (dmoment.cross(b) + moment.cross(db));
                     const Eigen::Vector3d hb =
-                        coeff * (da.cross(L) + a.cross(dL));
+                        coeff * (da.cross(moment) + a.cross(dmoment));
                     h_rigid_frames[static_cast<size_t>(k - 1)].row(i) +=
                         ha.transpose();
                     h_rigid_frames[static_cast<size_t>(k)].row(i) +=
@@ -821,12 +882,22 @@ TrustRegionResult interpolate_geodesic_trust_region(
             std::vector<MeshData> trial = out.frames;
             const Eigen::VectorXd x_trial = x + s_trial;
             unpack_interior_frames(x_trial, trial, tr_params);
-            const double model_e_trial =
-                path_energy(trial, energy_params, &model_cache).terms.total;
-            e_trial =
-                tr_params.use_rebuilt_acceptance_energy
-                    ? path_energy(trial, energy_params).terms.total
-                    : model_e_trial;
+            double model_e_trial = std::numeric_limits<double>::infinity();
+            try {
+                model_e_trial =
+                    path_energy(trial, energy_params, &model_cache)
+                        .terms.total;
+                e_trial =
+                    tr_params.use_rebuilt_acceptance_energy
+                        ? path_energy(trial, energy_params).terms.total
+                        : model_e_trial;
+            } catch (const std::bad_alloc &) {
+                std::cerr
+                    << "[TrustRegion] Trial energy allocation failed at "
+                    << "backtrack " << bt
+                    << "; rejecting this trial step.\n";
+                e_trial = std::numeric_limits<double>::infinity();
+            }
 
             const double pred =
                 -(alpha * g_dot_s + 0.5 * alpha * alpha * sHs);

@@ -286,6 +286,42 @@ void test_surface_tpe_barrier_bh_theta_zero_matches_brute() {
     check(g_rel < 1e-12, "BH theta=0 barrier gradient matches brute");
 }
 
+void test_surface_tpe_barrier_intersection_is_infinite() {
+    std::cout << "-- surface TPE barrier intersection guard --\n";
+    MeshData mesh;
+    mesh.V.resize(3, 3);
+    mesh.V << 0.25, 0.25, -0.25,
+              0.25, 0.25,  0.25,
+              0.75, 0.25,  0.00;
+    mesh.F.resize(1, 3);
+    mesh.F << 0, 1, 2;
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier;
+    barrier.V.resize(3, 3);
+    barrier.V << 0.0, 0.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0;
+    barrier.F.resize(1, 3);
+    barrier.F << 0, 1, 2;
+    barrier.L0 = barrier.compute_L0();
+
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.0);
+    check(surface_tpe_barrier_intersects(mesh, barrier),
+          "surface barrier detects triangle intersection");
+    check(std::isinf(surface_tpe_barrier_energy(mesh, barrier, 6.0)),
+          "brute surface barrier is infinite on intersection");
+    check(std::isinf(
+              surface_tpe_barrier_energy_bh(mesh, barrier, cache, 6.0)),
+          "BH surface barrier is infinite on intersection");
+
+    mesh.V.col(2).array() += 0.6;
+    mesh.L0 = mesh.compute_L0();
+    check(!surface_tpe_barrier_intersects(mesh, barrier),
+          "surface barrier reports separated triangles as feasible");
+}
+
 void test_surface_tpe_barrier_bh_gradient_fd() {
     std::cout << "-- surface TPE barrier BH frozen-partition FD check --\n";
     MeshData mesh = make_icosphere(0);
@@ -358,6 +394,50 @@ void test_surface_tpe_barrier_adaptive_depth0_matches_midpoint() {
           "surface barrier adaptive depth0 energy equals midpoint");
     check(g_err < 1e-10,
           "surface barrier adaptive depth0 gradient equals midpoint");
+}
+
+void test_surface_tpe_barrier_adaptive_cap_is_per_pair() {
+    std::cout << "-- surface TPE barrier adaptive cap is per pair --\n";
+
+    MeshData mesh;
+    mesh.V.resize(6, 3);
+    mesh.V << 0.0, 0.0, 0.10,
+              1.0, 0.0, 0.10,
+              0.0, 1.0, 0.10,
+              2.0, 0.0, 0.10,
+              3.0, 0.0, 0.10,
+              2.0, 1.0, 0.10;
+    mesh.F.resize(2, 3);
+    mesh.F << 0, 1, 2,
+              3, 4, 5;
+    mesh.L0 = mesh.compute_L0();
+
+    MeshData barrier;
+    barrier.V.resize(6, 3);
+    barrier.V << 0.0, 0.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0,
+                 2.0, 0.0, 0.0,
+                 3.0, 0.0, 0.0,
+                 2.0, 1.0, 0.0;
+    barrier.F.resize(2, 3);
+    barrier.F << 0, 1, 2,
+                 3, 4, 5;
+    barrier.L0 = barrier.compute_L0();
+
+    TpeAdaptiveParams adaptive;
+    adaptive.enabled = true;
+    adaptive.theta = 0.0;
+    adaptive.max_depth = 1;
+    adaptive.max_stack_items = 1024;
+    adaptive.max_total_terms = 16;
+
+    const SurfaceBarrierCache cache =
+        build_surface_tpe_barrier_cache(mesh, barrier, 0.0, adaptive);
+    std::cout << "    adaptive terms = " << cache.near_terms.size()
+              << "\n";
+    check(cache.near_terms.size() == 64,
+          "adaptive term cap is applied per primitive pair");
 }
 
 void test_surface_tpe_barrier_adaptive_gradient_fd() {
@@ -758,8 +838,10 @@ int main() {
     test_obstacle_energy_gradient_fd();
     test_surface_tpe_barrier_gradient_fd();
     test_surface_tpe_barrier_bh_theta_zero_matches_brute();
+    test_surface_tpe_barrier_intersection_is_infinite();
     test_surface_tpe_barrier_bh_gradient_fd();
     test_surface_tpe_barrier_adaptive_depth0_matches_midpoint();
+    test_surface_tpe_barrier_adaptive_cap_is_per_pair();
     test_surface_tpe_barrier_adaptive_gradient_fd();
     test_surface_tpe_barrier_adaptive_near_contact_growth();
     test_path_energy_uses_adaptive_surface_tpe_barrier();

@@ -14,6 +14,10 @@ struct ShellEnergyParams {
     // Lamé parameters for membrane energy.
     double lambda = 1.0;
     double mu = 1.0;
+    // Extra scalar weights for material sweeps. RS Fig. 31 varies bending
+    // stiffness; changing thickness also changes membrane stiffness.
+    double membrane_weight = 1.0;
+    double bending_weight = 1.0;
     // Smoothing used to keep det terms finite around degeneracy.
     double det_smoothing = 1e-8;
     // Clamp theta to pi - eps before tan(theta / 2) to keep barrier finite.

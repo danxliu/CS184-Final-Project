@@ -10,12 +10,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -32,24 +32,6 @@ std::string frame_path(const std::string &dir, int idx) {
     return oss.str();
 }
 
-void write_frame_sequence_atomic(const std::vector<MeshData> &frames,
-                                 const std::string &dir) {
-    for (int k = 0; k < static_cast<int>(frames.size()); ++k) {
-        const std::string dst = frame_path(dir, k);
-        std::ostringstream tmp_oss;
-        tmp_oss << dir << "/.frame_" << std::setfill('0')
-                << std::setw(4) << k << ".tmp.obj";
-        const std::string tmp = tmp_oss.str();
-        frames[static_cast<size_t>(k)].save_obj(tmp);
-        std::error_code ec;
-        std::filesystem::rename(tmp, dst, ec);
-        if (ec) {
-            std::cerr << "failed to publish checkpoint frame " << dst
-                      << ": " << ec.message() << "\n";
-        }
-    }
-}
-
 void remove_stale_outputs(const std::string &dir) {
     if (!std::filesystem::exists(dir)) return;
     for (const auto &entry : std::filesystem::directory_iterator(dir)) {
@@ -57,19 +39,20 @@ void remove_stale_outputs(const std::string &dir) {
         const std::string name = entry.path().filename().string();
         if ((name.rfind("frame_", 0) == 0 &&
              entry.path().extension() == ".obj") ||
-            (name.rfind(".frame_", 0) == 0 &&
-             entry.path().extension() == ".obj") ||
             (name.rfind("energy_level_", 0) == 0 &&
              entry.path().extension() == ".csv") ||
-            name == "energy.csv" || name == "obstacle.obj" ||
-            name == "paper_config.txt") {
+            name == "energy.csv" || name == "obstacle.obj") {
             std::filesystem::remove(entry.path());
         }
     }
 }
 
 struct CliOptions {
-    int icosphere_subdiv = 2;
+    // Keep defaults modest enough for 30-frame interpolation previews. The
+    // previous 48x24 default skipped the block preconditioner and could drive
+    // multi-GB trust-region solves.
+    int torus_nu = 18;
+    int torus_nv = 10;
     int num_frames = 9;
     int max_tr_iters = rsh::TrustRegionParams().max_iters;
     int max_cg_iters = rsh::TrustRegionParams().max_cg_iters;
@@ -81,67 +64,39 @@ struct CliOptions {
     double block_preconditioner_regularization_floor =
         rsh::TrustRegionParams().block_preconditioner_regularization_floor;
     double obstacle_weight = 1e-4;
-    double sdf_guard_weight = 0.0;
+    double sdf_guard_weight = 1e-6;
     double graph_beta = 1e-7;
-    double tpe_inner_weight = rsh::PathEnergyParams().tpe_inner_weight;
     double rigid_translation_weight = 1.0;
     double rigid_rotation_weight = 1e-2;
-    double ball_radius = 0.30;
-    double endpoint_x = 1.80;
-    double tube_inner_radius = 0.22;
-    double tube_outer_radius = 0.30;
-    double tube_half_length = 0.25;
-    double barrier_half_width = 0.75;
-    double barrier_half_height = 0.75;
+    double torus_major_radius = 0.40;
+    double torus_minor_radius = 0.08;
+    double endpoint_x = 2.00;
+    double tube_inner_radius = 0.30;
+    double tube_outer_radius = 0.36;
+    double tube_half_length = 1.20;
     double squeeze_margin = 0.95;
     double shell_thickness = 0.01;
     double shell_lambda = rsh::ShellEnergyParams().lambda;
     double shell_mu = rsh::ShellEnergyParams().mu;
-    double shell_membrane_weight = rsh::ShellEnergyParams().membrane_weight;
-    double shell_bending_weight = rsh::ShellEnergyParams().bending_weight;
-    bool shell_use_tan_bending = rsh::ShellEnergyParams().use_tan_bending;
     double self_tpe_weight = rsh::PathEnergyParams().self_tpe_weight;
     double max_centroid_gap_factor = 2.5;
-    int adaptive_depth = rsh::TpeAdaptiveParams().max_depth;
+    int max_optimized_dofs = 35000;
+    int adaptive_depth = 12;
     int adaptive_max_terms =
         static_cast<int>(rsh::TpeAdaptiveParams().max_total_terms);
-    int obstacle_circ = 48;
     int continuation_stages = 1;
-    int temporal_refinement_levels = 1;
+    // Keep opt-in for torus: --num-frames 30 should solve/write 30 frames,
+    // not silently refine to 59 frames.
+    int temporal_refinement_levels = 0;
     int bootstrap_iters = 6;
-    bool num_frames_explicit = false;
-    bool out_dir_explicit = false;
-    bool graph_beta_explicit = false;
-    bool tpe_inner_weight_explicit = false;
-    bool obstacle_weight_explicit = false;
-    bool self_tpe_weight_explicit = false;
-    bool rigid_translation_weight_explicit = false;
-    bool rigid_rotation_weight_explicit = false;
-    bool ball_radius_explicit = false;
-    bool endpoint_x_explicit = false;
-    bool tube_inner_radius_explicit = false;
-    bool tube_outer_radius_explicit = false;
-    bool tube_half_length_explicit = false;
-    bool barrier_half_width_explicit = false;
-    bool barrier_half_height_explicit = false;
-    bool shell_thickness_explicit = false;
-    bool shell_membrane_weight_explicit = false;
-    bool shell_bending_weight_explicit = false;
-    bool shell_bending_model_explicit = false;
-    bool obstacle_circ_explicit = false;
-    bool adaptive_depth_explicit = false;
-    bool adaptive_max_terms_explicit = false;
-    bool temporal_refinement_explicit = false;
-    bool init_mode_explicit = false;
-    bool paper_fig4 = false;
     bool check_init_only = false;
     bool bootstrap_project_clearance = false;
+    bool allow_large_run = false;
     bool use_graph_residual_hessian = false;
     bool use_block_preconditioner =
         rsh::TrustRegionParams().use_block_diagonal_preconditioner;
     std::string init_mode = "piecewise";
-    std::string obstacle_geometry = "slab-hole";
-    std::string out_dir = "out/ball_tube_interp";
+    std::string out_dir = "out/torus_tube_interp";
 };
 
 int parse_int(int argc, char **argv, int &i, const std::string &name) {
@@ -166,9 +121,12 @@ CliOptions parse_args(int argc, char **argv) {
         const std::string arg(argv[i]);
         if (arg == "--num-frames") {
             opts.num_frames = parse_int(argc, argv, i, arg);
-            opts.num_frames_explicit = true;
-        } else if (arg == "--icosphere-subdiv") {
-            opts.icosphere_subdiv = parse_int(argc, argv, i, arg);
+        } else if (arg == "--torus-nu") {
+            opts.torus_nu = parse_int(argc, argv, i, arg);
+        } else if (arg == "--torus-nv") {
+            opts.torus_nv = parse_int(argc, argv, i, arg);
+        } else if (arg == "--torus-minor-radius") {
+            opts.torus_minor_radius = parse_double(argc, argv, i, arg);
         } else if (arg == "--max-tr-iters") {
             opts.max_tr_iters = parse_int(argc, argv, i, arg);
         } else if (arg == "--max-cg-iters") {
@@ -194,243 +152,92 @@ CliOptions parse_args(int argc, char **argv) {
         } else if (arg == "--obstacle-weight" ||
                    arg == "--tpe-barrier-weight") {
             opts.obstacle_weight = parse_double(argc, argv, i, arg);
-            opts.obstacle_weight_explicit = true;
         } else if (arg == "--sdf-guard-weight") {
             opts.sdf_guard_weight = parse_double(argc, argv, i, arg);
-        } else if (arg == "--paper-fig4") {
-            opts.paper_fig4 = true;
-            opts.obstacle_geometry = "slab-hole";
-            opts.sdf_guard_weight = 0.0;
-            opts.use_graph_residual_hessian = false;
-            opts.use_block_preconditioner = true;
         } else if (arg == "--graph-beta") {
             opts.graph_beta = parse_double(argc, argv, i, arg);
-            opts.graph_beta_explicit = true;
-        } else if (arg == "--tpe-inner-weight") {
-            opts.tpe_inner_weight = parse_double(argc, argv, i, arg);
-            opts.tpe_inner_weight_explicit = true;
         } else if (arg == "--rigid-translation-weight") {
             opts.rigid_translation_weight = parse_double(argc, argv, i, arg);
-            opts.rigid_translation_weight_explicit = true;
         } else if (arg == "--rigid-rotation-weight") {
             opts.rigid_rotation_weight = parse_double(argc, argv, i, arg);
-            opts.rigid_rotation_weight_explicit = true;
-        } else if (arg == "--ball-radius") {
-            opts.ball_radius = parse_double(argc, argv, i, arg);
-            opts.ball_radius_explicit = true;
+        } else if (arg == "--torus-major-radius") {
+            opts.torus_major_radius = parse_double(argc, argv, i, arg);
         } else if (arg == "--endpoint-x" || arg == "--path-half-length") {
             opts.endpoint_x = parse_double(argc, argv, i, arg);
-            opts.endpoint_x_explicit = true;
         } else if (arg == "--tube-radius" ||
                    arg == "--tube-inner-radius") {
             opts.tube_inner_radius = parse_double(argc, argv, i, arg);
-            opts.tube_inner_radius_explicit = true;
         } else if (arg == "--tube-outer-radius") {
             opts.tube_outer_radius = parse_double(argc, argv, i, arg);
-            opts.tube_outer_radius_explicit = true;
         } else if (arg == "--tube-wall-thickness") {
             const double thickness = parse_double(argc, argv, i, arg);
             opts.tube_outer_radius = opts.tube_inner_radius + thickness;
-            opts.tube_outer_radius_explicit = true;
         } else if (arg == "--tube-half-length") {
             opts.tube_half_length = parse_double(argc, argv, i, arg);
-            opts.tube_half_length_explicit = true;
-        } else if (arg == "--barrier-half-width" ||
-                   arg == "--slab-half-width") {
-            opts.barrier_half_width = parse_double(argc, argv, i, arg);
-            opts.barrier_half_width_explicit = true;
-        } else if (arg == "--barrier-half-height" ||
-                   arg == "--slab-half-height") {
-            opts.barrier_half_height = parse_double(argc, argv, i, arg);
-            opts.barrier_half_height_explicit = true;
         } else if (arg == "--squeeze-margin") {
             opts.squeeze_margin = parse_double(argc, argv, i, arg);
         } else if (arg == "--shell-thickness") {
             opts.shell_thickness = parse_double(argc, argv, i, arg);
-            opts.shell_thickness_explicit = true;
         } else if (arg == "--shell-lambda") {
             opts.shell_lambda = parse_double(argc, argv, i, arg);
         } else if (arg == "--shell-mu") {
             opts.shell_mu = parse_double(argc, argv, i, arg);
-        } else if (arg == "--shell-membrane-weight") {
-            opts.shell_membrane_weight = parse_double(argc, argv, i, arg);
-            opts.shell_membrane_weight_explicit = true;
-        } else if (arg == "--shell-bending-weight") {
-            opts.shell_bending_weight = parse_double(argc, argv, i, arg);
-            opts.shell_bending_weight_explicit = true;
-        } else if (arg == "--simple-bending") {
-            opts.shell_use_tan_bending = false;
-            opts.shell_bending_model_explicit = true;
-        } else if (arg == "--tan-bending") {
-            opts.shell_use_tan_bending = true;
-            opts.shell_bending_model_explicit = true;
         } else if (arg == "--self-tpe-weight") {
             opts.self_tpe_weight = parse_double(argc, argv, i, arg);
-            opts.self_tpe_weight_explicit = true;
         } else if (arg == "--max-centroid-gap-factor") {
             opts.max_centroid_gap_factor =
                 parse_double(argc, argv, i, arg);
+        } else if (arg == "--max-optimized-dofs") {
+            opts.max_optimized_dofs = parse_int(argc, argv, i, arg);
         } else if (arg == "--adaptive-depth") {
             opts.adaptive_depth = parse_int(argc, argv, i, arg);
-            opts.adaptive_depth_explicit = true;
         } else if (arg == "--adaptive-max-terms") {
             opts.adaptive_max_terms = parse_int(argc, argv, i, arg);
-            opts.adaptive_max_terms_explicit = true;
-        } else if (arg == "--obstacle-circ") {
-            opts.obstacle_circ = parse_int(argc, argv, i, arg);
-            opts.obstacle_circ_explicit = true;
         } else if (arg == "--continuation-stages") {
             opts.continuation_stages = parse_int(argc, argv, i, arg);
         } else if (arg == "--temporal-refinement-levels") {
             opts.temporal_refinement_levels = parse_int(argc, argv, i, arg);
-            opts.temporal_refinement_explicit = true;
         } else if (arg == "--bootstrap-iters") {
             opts.bootstrap_iters = parse_int(argc, argv, i, arg);
         } else if (arg == "--bootstrap-project-clearance") {
             opts.bootstrap_project_clearance = true;
         } else if (arg == "--no-bootstrap-project-clearance") {
             opts.bootstrap_project_clearance = false;
+        } else if (arg == "--allow-large-run") {
+            opts.allow_large_run = true;
         } else if (arg == "--init-mode") {
             opts.init_mode = parse_string(argc, argv, i, arg);
-            opts.init_mode_explicit = true;
-        } else if (arg == "--obstacle-geometry") {
-            opts.obstacle_geometry = parse_string(argc, argv, i, arg);
         } else if (arg == "--check-init-only") {
             opts.check_init_only = true;
         } else if (arg == "--out-dir") {
             opts.out_dir = parse_string(argc, argv, i, arg);
-            opts.out_dir_explicit = true;
         } else {
             throw std::runtime_error("unknown argument: " + arg);
-        }
-    }
-
-    if (opts.paper_fig4) {
-        if (!opts.num_frames_explicit) {
-            opts.num_frames = 5;
-        }
-        if (!opts.out_dir_explicit) {
-            opts.out_dir = "out/ball_tube_interp_paper_fig4";
-        }
-        if (!opts.temporal_refinement_explicit) {
-            opts.temporal_refinement_levels = 2;
-        }
-        if (!opts.init_mode_explicit) {
-            // Reference YAML Interpolation_SphereThroughTunnel.yaml supplies
-            // three init files and all are the start sphere:
-            // [start, start, start, start, end] for 4 path segments.
-            opts.init_mode = "start-stack";
-        }
-        if (!opts.graph_beta_explicit) {
-            opts.graph_beta = 1.0;
-        }
-        if (!opts.tpe_inner_weight_explicit) {
-            opts.tpe_inner_weight = 1e-6;
-        }
-        if (!opts.self_tpe_weight_explicit) {
-            opts.self_tpe_weight = 1e-2;
-        }
-        if (!opts.obstacle_weight_explicit) {
-            opts.obstacle_weight = 1e-2;
-        }
-        if (!opts.rigid_translation_weight_explicit) {
-            opts.rigid_translation_weight = 1.0;
-        }
-        if (!opts.rigid_rotation_weight_explicit) {
-            opts.rigid_rotation_weight = 1e-3;
-        }
-        if (!opts.shell_thickness_explicit) {
-            opts.shell_thickness = 1.0;
-        }
-        if (!opts.shell_membrane_weight_explicit) {
-            opts.shell_membrane_weight = 1e-4;
-        }
-        if (!opts.shell_bending_weight_explicit) {
-            // Official config has elasticWeight*bendingWeight = 1e-6.
-            // Our bending kernel divides by one-third of the adjacent face
-            // area, while GOAST's SimpleBendingEnergy divides by the full
-            // adjacent-area sum, so compensate by 1/3 for the preset.
-            opts.shell_bending_weight = 1e-6 / 3.0;
-        }
-        if (!opts.shell_bending_model_explicit) {
-            opts.shell_use_tan_bending = false;
-        }
-        if (!opts.ball_radius_explicit) {
-            opts.ball_radius = 0.30;
-        }
-        const double official_sphere_radius = 1.100000023841858;
-        if (!opts.tube_inner_radius_explicit) {
-            opts.tube_inner_radius =
-                opts.ball_radius * 0.9488698975097236 /
-                official_sphere_radius;
-        }
-        if (!opts.endpoint_x_explicit) {
-            opts.endpoint_x =
-                opts.ball_radius * 4.1 / official_sphere_radius;
-        }
-        if (!opts.tube_half_length_explicit) {
-            opts.tube_half_length =
-                opts.ball_radius * 2.0 / official_sphere_radius;
-        }
-        if (!opts.barrier_half_width_explicit) {
-            opts.barrier_half_width =
-                opts.ball_radius * 10.0 / official_sphere_radius;
-        }
-        if (!opts.barrier_half_height_explicit) {
-            opts.barrier_half_height =
-                opts.ball_radius * 10.0 / official_sphere_radius;
-        }
-        if (!opts.tube_outer_radius_explicit) {
-            opts.tube_outer_radius =
-                std::max(opts.tube_inner_radius + 0.08,
-                         opts.tube_inner_radius * 1.2);
-        }
-        if (!opts.obstacle_circ_explicit) {
-            opts.obstacle_circ = 96;
-        }
-        if (!opts.adaptive_depth_explicit) {
-            opts.adaptive_depth = 5;
-        }
-        if (!opts.adaptive_max_terms_explicit) {
-            int full_depth_terms = 1;
-            for (int d = 0; d < opts.adaptive_depth; ++d) {
-                if (full_depth_terms > std::numeric_limits<int>::max() / 16) {
-                    full_depth_terms = std::numeric_limits<int>::max();
-                    break;
-                }
-                full_depth_terms *= 16;
-            }
-            opts.adaptive_max_terms = std::max(16, full_depth_terms);
         }
     }
 
     if (opts.num_frames < 3) {
         throw std::runtime_error("--num-frames must be >= 3");
     }
-    if (opts.icosphere_subdiv < 0) {
-        throw std::runtime_error("--icosphere-subdiv must be nonnegative");
+    if (opts.torus_nu < 6) {
+        throw std::runtime_error("--torus-nu must be >= 6");
     }
-    if (!(opts.ball_radius > 0.0 && opts.tube_inner_radius > 0.0 &&
+    if (opts.torus_nv < 4) {
+        throw std::runtime_error("--torus-nv must be >= 4");
+    }
+    if (!(opts.torus_major_radius > 0.0 && opts.torus_minor_radius > 0.0 &&
+          opts.torus_minor_radius < opts.torus_major_radius &&
+          opts.tube_inner_radius > 0.0 &&
           opts.tube_outer_radius > opts.tube_inner_radius &&
           opts.tube_half_length > 0.0 && opts.endpoint_x > 0.0)) {
-        throw std::runtime_error("ball/tube geometry must be positive");
+        throw std::runtime_error("torus/tube geometry must be positive "
+                                 "and minor < major");
     }
-    if (!(opts.endpoint_x > opts.tube_half_length + opts.ball_radius)) {
+    const double torus_outer_radial =
+        opts.torus_major_radius + opts.torus_minor_radius;
+    if (!(opts.endpoint_x > opts.tube_half_length + torus_outer_radial)) {
         throw std::runtime_error(
-            "--endpoint-x must place the full ball outside the tube");
-    }
-    if (opts.obstacle_geometry != "slab-hole" &&
-        opts.obstacle_geometry != "hollow-tube") {
-        throw std::runtime_error(
-            "--obstacle-geometry must be slab-hole or hollow-tube");
-    }
-    if (!(opts.barrier_half_width > opts.tube_inner_radius &&
-          opts.barrier_half_height > opts.tube_inner_radius &&
-          std::isfinite(opts.barrier_half_width) &&
-          std::isfinite(opts.barrier_half_height))) {
-        throw std::runtime_error(
-            "--barrier-half-width/height must be finite and larger than "
-            "--tube-inner-radius");
+            "--endpoint-x must place the full torus outside the tube");
     }
     if (!(opts.obstacle_weight >= 0.0 && std::isfinite(opts.obstacle_weight))) {
         throw std::runtime_error("--obstacle-weight must be finite and >= 0");
@@ -441,10 +248,6 @@ CliOptions parse_args(int argc, char **argv) {
     }
     if (!(opts.graph_beta >= 0.0 && std::isfinite(opts.graph_beta))) {
         throw std::runtime_error("--graph-beta must be finite and >= 0");
-    }
-    if (!(opts.tpe_inner_weight >= 0.0 &&
-          std::isfinite(opts.tpe_inner_weight))) {
-        throw std::runtime_error("--tpe-inner-weight must be finite and >= 0");
     }
     if (!(opts.rigid_translation_weight >= 0.0 &&
           std::isfinite(opts.rigid_translation_weight))) {
@@ -480,16 +283,6 @@ CliOptions parse_args(int argc, char **argv) {
     if (!(opts.shell_mu > 0.0 && std::isfinite(opts.shell_mu))) {
         throw std::runtime_error("--shell-mu must be finite and > 0");
     }
-    if (!(opts.shell_membrane_weight > 0.0 &&
-          std::isfinite(opts.shell_membrane_weight))) {
-        throw std::runtime_error(
-            "--shell-membrane-weight must be finite and > 0");
-    }
-    if (!(opts.shell_bending_weight > 0.0 &&
-          std::isfinite(opts.shell_bending_weight))) {
-        throw std::runtime_error(
-            "--shell-bending-weight must be finite and > 0");
-    }
     if (!(opts.self_tpe_weight >= 0.0 &&
           std::isfinite(opts.self_tpe_weight))) {
         throw std::runtime_error("--self-tpe-weight must be finite and >= 0");
@@ -499,14 +292,14 @@ CliOptions parse_args(int argc, char **argv) {
         throw std::runtime_error(
             "--max-centroid-gap-factor must be finite and > 0");
     }
+    if (opts.max_optimized_dofs < 1) {
+        throw std::runtime_error("--max-optimized-dofs must be positive");
+    }
     if (opts.adaptive_depth < 0) {
         throw std::runtime_error("--adaptive-depth must be nonnegative");
     }
-    if (opts.adaptive_max_terms < 16) {
-        throw std::runtime_error("--adaptive-max-terms must be >= 16");
-    }
-    if (opts.obstacle_circ < 8) {
-        throw std::runtime_error("--obstacle-circ must be >= 8");
+    if (opts.adaptive_max_terms < 1) {
+        throw std::runtime_error("--adaptive-max-terms must be positive");
     }
     if (opts.continuation_stages < 1) {
         throw std::runtime_error("--continuation-stages must be >= 1");
@@ -518,14 +311,42 @@ CliOptions parse_args(int argc, char **argv) {
     if (opts.bootstrap_iters < 0) {
         throw std::runtime_error("--bootstrap-iters must be nonnegative");
     }
+    const int block_dim = 3 * opts.torus_nu * opts.torus_nv;
+    const int block_limit =
+        rsh::TrustRegionParams().block_preconditioner_max_block_dofs;
+    if (!opts.allow_large_run && block_dim > block_limit) {
+        std::ostringstream oss;
+        oss << "torus mesh has " << block_dim
+            << " DOFs per frame, exceeding the block-preconditioner limit "
+            << block_limit
+            << ". Lower --torus-nu/--torus-nv, or pass --allow-large-run "
+               "if you intentionally want the unpreconditioned large solve.";
+        throw std::runtime_error(oss.str());
+    }
+    int effective_frames = opts.num_frames;
+    for (int level = 0; level < opts.temporal_refinement_levels; ++level) {
+        effective_frames = 2 * effective_frames - 1;
+    }
+    const int optimized_frames = std::max(0, effective_frames - 2);
+    const int optimized_dofs = block_dim * optimized_frames;
+    if (!opts.allow_large_run && optimized_dofs > opts.max_optimized_dofs) {
+        std::ostringstream oss;
+        oss << "torus path has " << optimized_dofs
+            << " optimized DOFs after temporal refinement ("
+            << effective_frames << " frames), exceeding "
+            << opts.max_optimized_dofs
+            << ". Lower --num-frames, --temporal-refinement-levels, "
+               "--torus-nu/--torus-nv, raise --max-optimized-dofs, or pass "
+               "--allow-large-run.";
+        throw std::runtime_error(oss.str());
+    }
     if (opts.init_mode != "linear" && opts.init_mode != "piecewise" &&
-        opts.init_mode != "start-stack" &&
         opts.init_mode != "piecewise-smooth" &&
         opts.init_mode != "midpoint-pin" &&
         opts.init_mode != "tube-clearance") {
         throw std::runtime_error(
-            "--init-mode must be one of: linear, piecewise, start-stack, "
-            "piecewise-smooth, midpoint-pin, tube-clearance");
+            "--init-mode must be one of: linear, piecewise, piecewise-smooth, "
+            "midpoint-pin, tube-clearance");
     }
     return opts;
 }
@@ -648,176 +469,17 @@ MeshData make_hollow_tube_mesh(double half_length,
     return mesh;
 }
 
-class SlabWithCircularHoleObstacle final : public rsh::Obstacle {
-public:
-    SlabWithCircularHoleObstacle(double half_thickness,
-                                 double half_width,
-                                 double half_height,
-                                 double hole_radius)
-        : half_thickness_(half_thickness),
-          half_width_(half_width),
-          half_height_(half_height),
-          hole_radius_(hole_radius) {
-        if (!(half_thickness_ > 0.0 && half_width_ > hole_radius_ &&
-              half_height_ > hole_radius_ && hole_radius_ > 0.0)) {
-            throw std::runtime_error(
-                "SlabWithCircularHoleObstacle: invalid dimensions");
-        }
+MeshData make_torus_at(double R, double r, int nu, int nv,
+                       const Eigen::RowVector3d &center) {
+    MeshData torus = rsh::make_torus(R, r, nu, nv);
+    if (torus.n_vertices() == 0 || torus.n_faces() == 0) {
+        throw std::runtime_error("invalid procedural torus mesh");
     }
-
-    double signed_distance(const Eigen::Vector3d &x) const override {
-        const double box = box_signed_distance(x);
-        const double radial = std::hypot(x.y(), x.z());
-        const double outside_hole = hole_radius_ - radial;
-        return std::max(box, outside_hole);
-    }
-
-    Eigen::Vector3d
-    signed_distance_gradient(const Eigen::Vector3d &x) const override {
-        const double box = box_signed_distance(x);
-        const double radial = std::hypot(x.y(), x.z());
-        const double outside_hole = hole_radius_ - radial;
-        if (box >= outside_hole) {
-            return box_signed_distance_gradient(x);
-        }
-        if (radial <= 0.0) {
-            return Eigen::Vector3d(0.0, -1.0, 0.0);
-        }
-        return Eigen::Vector3d(0.0, -x.y() / radial, -x.z() / radial);
-    }
-
-private:
-    double box_signed_distance(const Eigen::Vector3d &x) const {
-        const Eigen::Vector3d half_extents(
-            half_thickness_, half_width_, half_height_);
-        const Eigen::Vector3d q = x.cwiseAbs() - half_extents;
-        const Eigen::Vector3d outside = q.cwiseMax(0.0);
-        const double outside_dist = outside.norm();
-        const double inside_dist = std::min(q.maxCoeff(), 0.0);
-        return outside_dist + inside_dist;
-    }
-
-    Eigen::Vector3d
-    box_signed_distance_gradient(const Eigen::Vector3d &x) const {
-        const Eigen::Vector3d half_extents(
-            half_thickness_, half_width_, half_height_);
-        const Eigen::Vector3d q = x.cwiseAbs() - half_extents;
-        const Eigen::Vector3d outside = q.cwiseMax(0.0);
-
-        if (outside.squaredNorm() > 0.0) {
-            Eigen::Vector3d g = Eigen::Vector3d::Zero();
-            for (int c = 0; c < 3; ++c) {
-                if (q(c) > 0.0) {
-                    g(c) = outside(c) * (x(c) >= 0.0 ? 1.0 : -1.0);
-                }
-            }
-            const double n = g.norm();
-            if (n > 0.0) return g / n;
-        }
-
-        int axis = 0;
-        if (q(1) > q(axis)) axis = 1;
-        if (q(2) > q(axis)) axis = 2;
-        Eigen::Vector3d g = Eigen::Vector3d::Zero();
-        g(axis) = x(axis) >= 0.0 ? 1.0 : -1.0;
-        return g;
-    }
-
-    double half_thickness_ = 0.25;
-    double half_width_ = 0.75;
-    double half_height_ = 0.75;
-    double hole_radius_ = 0.22;
-};
-
-Eigen::RowVector2d rectangle_boundary_point(double theta,
-                                            double half_width,
-                                            double half_height) {
-    const double c = std::cos(theta);
-    const double s = std::sin(theta);
-    const double eps = 1e-14;
-    const double scale_y =
-        half_width / std::max(std::abs(c), eps);
-    const double scale_z =
-        half_height / std::max(std::abs(s), eps);
-    const double scale = std::min(scale_y, scale_z);
-    return Eigen::RowVector2d(scale * c, scale * s);
-}
-
-MeshData make_slab_with_circular_hole_mesh(double half_thickness,
-                                           double half_width,
-                                           double half_height,
-                                           double hole_radius,
-                                           int n_circ) {
-    if (n_circ < 8) {
-        throw std::runtime_error("slab-hole obstacle needs n_circ >= 8");
-    }
-
-    MeshData mesh;
-    mesh.V.resize(4 * n_circ, 3);
-    mesh.F.resize(8 * n_circ, 3);
-
-    auto inner_idx = [&](int side, int i) {
-        return side * 2 * n_circ + (i % n_circ);
-    };
-    auto outer_idx = [&](int side, int i) {
-        return side * 2 * n_circ + n_circ + (i % n_circ);
-    };
-
-    for (int side = 0; side < 2; ++side) {
-        const double x = (side == 0) ? -half_thickness : half_thickness;
-        for (int i = 0; i < n_circ; ++i) {
-            const double theta = 2.0 * M_PI * i / n_circ;
-            const double cy = std::cos(theta);
-            const double sz = std::sin(theta);
-            mesh.V.row(inner_idx(side, i)) =
-                Eigen::RowVector3d(x, hole_radius * cy, hole_radius * sz);
-            const Eigen::RowVector2d yz =
-                rectangle_boundary_point(theta, half_width, half_height);
-            mesh.V.row(outer_idx(side, i)) =
-                Eigen::RowVector3d(x, yz.x(), yz.y());
-        }
-    }
-
-    int f = 0;
-    auto add_face = [&](int a, int b, int c) {
-        mesh.F.row(f++) = Eigen::Vector3i(a, b, c);
-    };
-
-    for (int i = 0; i < n_circ; ++i) {
-        const int j = (i + 1) % n_circ;
-
-        // Back and front slab faces: rectangle boundary to circular hole.
-        add_face(outer_idx(0, j), outer_idx(0, i), inner_idx(0, i));
-        add_face(outer_idx(0, j), inner_idx(0, i), inner_idx(0, j));
-        add_face(outer_idx(1, i), outer_idx(1, j), inner_idx(1, i));
-        add_face(outer_idx(1, j), inner_idx(1, j), inner_idx(1, i));
-
-        // Cylindrical wall of the hole.
-        add_face(inner_idx(0, i), inner_idx(1, i), inner_idx(1, j));
-        add_face(inner_idx(0, i), inner_idx(1, j), inner_idx(0, j));
-
-        // Exterior side wall around the rectangular slab boundary.
-        add_face(outer_idx(0, i), outer_idx(0, j), outer_idx(1, j));
-        add_face(outer_idx(0, i), outer_idx(1, j), outer_idx(1, i));
-    }
-
-    mesh.L0 = mesh.compute_L0();
-    return mesh;
-}
-
-MeshData make_ball(double radius, int subdiv, const Eigen::RowVector3d &center) {
-    MeshData ball = rsh::make_icosphere(subdiv);
-    ball.normalize();
-    const Eigen::RowVector3d c = ball.V.colwise().mean();
-    ball.V.rowwise() -= c;
-    const double normalized_radius = ball.V.rowwise().norm().maxCoeff();
-    if (!(normalized_radius > 0.0)) {
-        throw std::runtime_error("invalid procedural ball mesh");
-    }
-    ball.V *= radius / normalized_radius;
-    ball.V.rowwise() += center;
-    ball.L0 = ball.compute_L0();
-    return ball;
+    const Eigen::RowVector3d c = torus.V.colwise().mean();
+    torus.V.rowwise() -= c;
+    torus.V.rowwise() += center;
+    torus.L0 = torus.compute_L0();
+    return torus;
 }
 
 MeshData lerp_mesh(const MeshData &a, const MeshData &b, double t) {
@@ -836,12 +498,14 @@ double smoothstep01(double t) {
 // in or near the tube. This is a diagnostic scaffold, not a paper objective.
 double allowed_radial_at_tube_x(double x, const CliOptions &opts) {
     const double target_radial = opts.squeeze_margin * opts.tube_inner_radius;
+    const double torus_radial_extent =
+        opts.torus_major_radius + opts.torus_minor_radius;
     const double ax = std::abs(x);
     if (ax <= opts.tube_half_length) {
         return target_radial;
     }
 
-    const double transition_width = opts.ball_radius;
+    const double transition_width = torus_radial_extent;
     const double transition_end = opts.tube_half_length + transition_width;
     if (ax >= transition_end) {
         return std::numeric_limits<double>::infinity();
@@ -849,7 +513,7 @@ double allowed_radial_at_tube_x(double x, const CliOptions &opts) {
 
     const double u = (ax - opts.tube_half_length) / transition_width;
     return target_radial +
-           smoothstep01(u) * (opts.ball_radius - target_radial);
+           smoothstep01(u) * (torus_radial_extent - target_radial);
 }
 
 void apply_local_tube_clearance(MeshData &frame, const CliOptions &opts) {
@@ -870,12 +534,7 @@ std::vector<MeshData> initial_path(const MeshData &x0,
     std::vector<MeshData> frames(static_cast<size_t>(opts.num_frames), x0);
     const int n = opts.num_frames - 1;
 
-    if (opts.init_mode == "start-stack") {
-        for (int k = 0; k < n; ++k) {
-            frames[static_cast<size_t>(k)] = x0;
-        }
-        frames.back() = xN;
-    } else if (opts.init_mode == "piecewise") {
+    if (opts.init_mode == "piecewise") {
         for (int k = 0; k <= n; ++k) {
             frames[static_cast<size_t>(k)] = (k < opts.num_frames / 2) ? x0 : xN;
         }
@@ -1015,7 +674,7 @@ void validate_initial_path_feasible(const std::vector<MeshData> &frames,
         if (!(min_phi > 0.0) || !std::isfinite(phi)) {
             std::ostringstream oss;
             oss << "initial path frame " << k
-                << " intersects the obstacle or has non-finite obstacle "
+                << " intersects the tube wall or has non-finite obstacle "
                    "energy: min_phi="
                 << min_phi << ", obstacle_phi=" << phi;
             throw std::runtime_error(oss.str());
@@ -1077,54 +736,6 @@ double max_interior_membrane_strain(const MeshData &rest,
     return max_density;
 }
 
-void write_paper_config(const std::string &out_dir,
-                        const CliOptions &opts,
-                        const rsh::PathEnergyParams &params) {
-    std::ofstream meta(out_dir + "/paper_config.txt");
-    meta << std::setprecision(10);
-    meta << "reference=RepulsiveShells Fig.4 / Sec.6.1 / Sec.7.4.3\n";
-    meta << "task=geodesic interpolation between two translations of a sphere\n";
-    meta << "path_energy=shell + graph_beta*(w_self*dPhi_self^2 + "
-            "w_obstacle*dPhi_obstacle^2 + w_sdf*dPhi_sdf^2) + rigid "
-            "translation/rotation terms\n";
-    meta << "obstacle_geometry=" << opts.obstacle_geometry << "\n";
-    meta << "tpe_barrier_enabled="
-         << (params.tpe_barrier_mesh != nullptr &&
-             params.tpe_barrier_weight != 0.0 ? 1 : 0)
-         << "\n";
-    meta << "sdf_guard_weight=" << opts.sdf_guard_weight << "\n";
-    meta << "init_mode=" << opts.init_mode << "\n";
-    meta << "temporal_refinement_levels="
-         << opts.temporal_refinement_levels << "\n";
-    meta << "ball_radius=" << opts.ball_radius << "\n";
-    meta << "endpoint_x=" << opts.endpoint_x << "\n";
-    meta << "hole_radius=" << opts.tube_inner_radius << "\n";
-    meta << "barrier_half_thickness=" << opts.tube_half_length << "\n";
-    meta << "barrier_half_width=" << opts.barrier_half_width << "\n";
-    meta << "barrier_half_height=" << opts.barrier_half_height << "\n";
-    meta << "graph_beta=" << opts.graph_beta << "\n";
-    meta << "tpe_inner_weight=" << opts.tpe_inner_weight << "\n";
-    meta << "self_tpe_weight=" << opts.self_tpe_weight << "\n";
-    meta << "tpe_barrier_weight=" << opts.obstacle_weight << "\n";
-    meta << "rigid_translation_weight="
-         << opts.rigid_translation_weight << "\n";
-    meta << "rigid_rotation_weight=" << opts.rigid_rotation_weight << "\n";
-    meta << "shell_thickness=" << opts.shell_thickness << "\n";
-    meta << "shell_lambda=" << opts.shell_lambda << "\n";
-    meta << "shell_mu=" << opts.shell_mu << "\n";
-    meta << "shell_membrane_weight="
-         << opts.shell_membrane_weight << "\n";
-    meta << "shell_bending_weight=" << opts.shell_bending_weight << "\n";
-    meta << "shell_bending_model="
-         << (opts.shell_use_tan_bending ? "tan_half" : "simple_angle")
-         << "\n";
-    meta << "adaptive_tpe=" << (params.tpe_adaptive.enabled ? 1 : 0) << "\n";
-    meta << "adaptive_theta=" << params.tpe_adaptive.theta << "\n";
-    meta << "adaptive_depth=" << opts.adaptive_depth << "\n";
-    meta << "adaptive_max_terms=" << opts.adaptive_max_terms << "\n";
-    meta << "obstacle_circ=" << opts.obstacle_circ << "\n";
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1132,53 +743,40 @@ int main(int argc, char **argv) {
     try {
         opts = parse_args(argc, argv);
     } catch (const std::exception &e) {
-        std::cerr << "demo_phase3_ball_tube_interp: " << e.what() << "\n";
+        std::cerr << "demo_phase3_torus_tube_interp: " << e.what() << "\n";
         return 1;
     }
 
-    std::unique_ptr<rsh::Obstacle> obstacle;
-    MeshData obstacle_mesh;
-    if (opts.obstacle_geometry == "slab-hole") {
-        obstacle = std::make_unique<SlabWithCircularHoleObstacle>(
-            opts.tube_half_length,
-            opts.barrier_half_width,
-            opts.barrier_half_height,
-            opts.tube_inner_radius);
-        obstacle_mesh = make_slab_with_circular_hole_mesh(
-            opts.tube_half_length,
-            opts.barrier_half_width,
-            opts.barrier_half_height,
-            opts.tube_inner_radius,
-            opts.obstacle_circ);
-    } else {
-        obstacle = std::make_unique<rsh::HollowTubeObstacle>(
-            Eigen::Vector3d::Zero(),
-            Eigen::Vector3d::UnitX(),
-            opts.tube_half_length,
-            opts.tube_inner_radius,
-            opts.tube_outer_radius);
-        obstacle_mesh = make_hollow_tube_mesh(
-            opts.tube_half_length,
-            opts.tube_inner_radius,
-            opts.tube_outer_radius,
-            opts.obstacle_circ);
-    }
+    try {
+    rsh::HollowTubeObstacle tube(
+        Eigen::Vector3d::Zero(),
+        Eigen::Vector3d::UnitX(),
+        opts.tube_half_length,
+        opts.tube_inner_radius,
+        opts.tube_outer_radius);
+    const MeshData tube_mesh = make_hollow_tube_mesh(
+        opts.tube_half_length,
+        opts.tube_inner_radius,
+        opts.tube_outer_radius,
+        48);
 
-    const MeshData x0 = make_ball(
-        opts.ball_radius, opts.icosphere_subdiv,
+    const MeshData x0 = make_torus_at(
+        opts.torus_major_radius, opts.torus_minor_radius,
+        opts.torus_nu, opts.torus_nv,
         Eigen::RowVector3d(-opts.endpoint_x, 0.0, 0.0));
-    const MeshData xN = make_ball(
-        opts.ball_radius, opts.icosphere_subdiv,
+    const MeshData xN = make_torus_at(
+        opts.torus_major_radius, opts.torus_minor_radius,
+        opts.torus_nu, opts.torus_nv,
         Eigen::RowVector3d(opts.endpoint_x, 0.0, 0.0));
 
     std::vector<MeshData> frames = initial_path(x0, xN, opts);
     try {
-        validate_initial_path_feasible(frames, *obstacle);
+        validate_initial_path_feasible(frames, tube);
     } catch (const std::exception &e) {
-        std::cerr << "demo_phase3_ball_tube_interp: initial path intersects "
-                     "the obstacle. "
+        std::cerr << "demo_phase3_torus_tube_interp: initial path intersects "
+                     "the tube wall. "
                   << e.what()
-                  << ". Try a smaller --ball-radius, larger "
+                  << ". Try a smaller --torus-major-radius, larger "
                      "--tube-inner-radius, lower --squeeze-margin, or "
                      "--init-mode midpoint-pin.\n";
         return 2;
@@ -1187,13 +785,15 @@ int main(int argc, char **argv) {
     double initial_min_phi_min = std::numeric_limits<double>::infinity();
     for (const MeshData &m : frames) {
         initial_min_phi_min =
-            std::min(initial_min_phi_min,
-                     min_signed_distance(m, *obstacle));
+            std::min(initial_min_phi_min, min_signed_distance(m, tube));
     }
     if (opts.check_init_only) {
-        std::cout << "demo_phase3_ball_tube_interp: init_only=1"
+        std::cout << "demo_phase3_torus_tube_interp: init_only=1"
                   << " frames=" << opts.num_frames
-                  << " ball_r=" << opts.ball_radius
+                  << " torus_R=" << opts.torus_major_radius
+                  << " torus_r=" << opts.torus_minor_radius
+                  << " torus_nu=" << opts.torus_nu
+                  << " torus_nv=" << opts.torus_nv
                   << " tube_inner_r=" << opts.tube_inner_radius
                   << " tube_half_length=" << opts.tube_half_length
                   << " squeeze_margin=" << opts.squeeze_margin
@@ -1206,24 +806,23 @@ int main(int argc, char **argv) {
 
     std::filesystem::create_directories(opts.out_dir);
     remove_stale_outputs(opts.out_dir);
-    obstacle_mesh.save_obj(opts.out_dir + "/obstacle.obj");
+    tube_mesh.save_obj(opts.out_dir + "/obstacle.obj");
 
     rsh::PathEnergyParams target_energy_params;
     target_energy_params.shell.thickness = opts.shell_thickness;
     target_energy_params.shell.lambda = opts.shell_lambda;
     target_energy_params.shell.mu = opts.shell_mu;
-    target_energy_params.shell.membrane_weight = opts.shell_membrane_weight;
-    target_energy_params.shell.bending_weight = opts.shell_bending_weight;
-    target_energy_params.shell.use_tan_bending = opts.shell_use_tan_bending;
     target_energy_params.graph_beta = opts.graph_beta;
-    target_energy_params.tpe_inner_weight = opts.tpe_inner_weight;
     target_energy_params.self_tpe_weight = opts.self_tpe_weight;
-    target_energy_params.tpe_barrier_mesh = &obstacle_mesh;
+    target_energy_params.tpe_barrier_mesh = &tube_mesh;
     target_energy_params.tpe_barrier_weight = opts.obstacle_weight;
-    // The fixed-surface TPE barrier is the paper-aligned graph term from
-    // RS Sec. 7.4.3. The SDF term is optional and defaults to zero; it is only a
-    // numerical guard for coarse diagnostic runs, not part of the paper preset.
-    target_energy_params.obstacle = obstacle.get();
+    // The fixed-surface TPE barrier is the paper-aligned graph term. The SDF
+    // term is a small discrete guard so coarse trial steps with vertices inside
+    // the tube wall are rejected instead of accepted through quadrature gaps.
+    // Keep it active through continuation: once an early stage enters the wall,
+    // the infinite guard cannot be enabled later because its gradient is
+    // undefined on an infeasible path.
+    target_energy_params.obstacle = &tube;
     target_energy_params.obstacle_weight = opts.sdf_guard_weight;
     target_energy_params.rigid_translation_weight =
         opts.rigid_translation_weight;
@@ -1234,11 +833,9 @@ int main(int argc, char **argv) {
     target_energy_params.tpe_adaptive.enabled = true;
     target_energy_params.tpe_adaptive.theta = 10.0;
     target_energy_params.tpe_adaptive.max_depth = opts.adaptive_depth;
-    target_energy_params.tpe_adaptive.max_stack_items =
-        opts.adaptive_max_terms;
+    target_energy_params.tpe_adaptive.max_stack_items = 1048576;
     target_energy_params.tpe_adaptive.max_total_terms =
         static_cast<std::size_t>(opts.adaptive_max_terms);
-    write_paper_config(opts.out_dir, opts, target_energy_params);
 
     auto stage_energy_params = [&](int stage) {
         rsh::PathEnergyParams p = target_energy_params;
@@ -1281,19 +878,18 @@ int main(int argc, char **argv) {
     };
     const double initial_radius_scale = radius_scale_for(frames);
 
-    std::cout << "demo_phase3_ball_tube_interp: frames=" << opts.num_frames
-              << " ball_r=" << opts.ball_radius
+    std::cout << "demo_phase3_torus_tube_interp: frames=" << opts.num_frames
+              << " torus_R=" << opts.torus_major_radius
+              << " torus_r=" << opts.torus_minor_radius
+              << " torus_nu=" << opts.torus_nu
+              << " torus_nv=" << opts.torus_nv
               << " endpoint_x=" << opts.endpoint_x
-              << " obstacle_geometry=" << opts.obstacle_geometry
               << " tube_inner_r=" << opts.tube_inner_radius
               << " tube_outer_r=" << opts.tube_outer_radius
               << " tube_half_length=" << opts.tube_half_length
-              << " barrier_half_width=" << opts.barrier_half_width
-              << " barrier_half_height=" << opts.barrier_half_height
               << " tpe_barrier_weight=" << opts.obstacle_weight
               << " sdf_guard_weight=" << opts.sdf_guard_weight
               << " graph_beta=" << opts.graph_beta
-              << " tpe_inner_weight=" << opts.tpe_inner_weight
               << " rigid_translation_weight="
               << opts.rigid_translation_weight
               << " rigid_rotation_weight=" << opts.rigid_rotation_weight
@@ -1308,20 +904,16 @@ int main(int argc, char **argv) {
               << " shell_thickness=" << opts.shell_thickness
               << " shell_lambda=" << opts.shell_lambda
               << " shell_mu=" << opts.shell_mu
-              << " shell_membrane_weight="
-              << opts.shell_membrane_weight
-              << " shell_bending_weight=" << opts.shell_bending_weight
-              << " shell_bending_model="
-              << (opts.shell_use_tan_bending ? "tan_half" : "simple_angle")
               << " self_tpe_weight=" << opts.self_tpe_weight
+              << " max_optimized_dofs=" << opts.max_optimized_dofs
               << " adaptive_depth=" << opts.adaptive_depth
               << " adaptive_max_terms=" << opts.adaptive_max_terms
-              << " obstacle_circ=" << opts.obstacle_circ
               << " continuation_stages=" << opts.continuation_stages
               << " temporal_refinement_levels="
               << opts.temporal_refinement_levels
               << " bootstrap_project_clearance="
               << (opts.bootstrap_project_clearance ? 1 : 0)
+              << " allow_large_run=" << (opts.allow_large_run ? 1 : 0)
               << " tr_initial_radius_rms=" << opts.initial_radius
               << " tr_max_radius_rms=" << opts.max_radius
               << " tr_radius_scale=" << initial_radius_scale
@@ -1345,7 +937,7 @@ int main(int argc, char **argv) {
         bootstrap_tr_params.max_iters = opts.bootstrap_iters;
         bootstrap_tr_params.iteration_callback = nullptr;
 
-        std::cout << "demo_phase3_ball_tube_interp: bootstrap_project_clearance=1"
+        std::cout << "demo_phase3_torus_tube_interp: bootstrap_project_clearance=1"
                   << " bootstrap_iters=" << opts.bootstrap_iters
                   << " starting_gap=" << max_centroid_x_gap(current_frames)
                   << "\n";
@@ -1366,10 +958,9 @@ int main(int argc, char **argv) {
             std::numeric_limits<double>::infinity();
         for (const MeshData &m : current_frames) {
             bootstrap_min_phi =
-                std::min(bootstrap_min_phi,
-                         min_signed_distance(m, *obstacle));
+                std::min(bootstrap_min_phi, min_signed_distance(m, tube));
         }
-        std::cout << "demo_phase3_ball_tube_interp: bootstrap_done"
+        std::cout << "demo_phase3_torus_tube_interp: bootstrap_done"
                   << " accepted_steps=" << bootstrap_result.accepted_steps
                   << " outer_iterations="
                   << bootstrap_result.outer_iterations
@@ -1379,7 +970,7 @@ int main(int argc, char **argv) {
                   << "\n";
         if (!(bootstrap_min_phi > 0.0)) {
             std::cerr
-                << "demo_phase3_ball_tube_interp: bootstrap projection "
+                << "demo_phase3_torus_tube_interp: bootstrap projection "
                    "failed to restore feasibility; min_phi="
                 << bootstrap_min_phi << "\n";
             return 3;
@@ -1395,11 +986,10 @@ int main(int argc, char **argv) {
                 std::numeric_limits<double>::infinity();
             for (const MeshData &m : current_frames) {
                 refined_min_phi =
-                    std::min(refined_min_phi,
-                             min_signed_distance(m, *obstacle));
+                    std::min(refined_min_phi, min_signed_distance(m, tube));
             }
             std::cout
-                << "demo_phase3_ball_tube_interp: temporal_refinement_level="
+                << "demo_phase3_torus_tube_interp: temporal_refinement_level="
                 << refinement_level << "/" << opts.temporal_refinement_levels
                 << " frames=" << current_frames.size()
                 << " inserted=piecewise_constant"
@@ -1408,7 +998,7 @@ int main(int argc, char **argv) {
                 << max_centroid_x_gap(current_frames) << "\n";
             if (!(refined_min_phi > 0.0)) {
                 std::cerr
-                    << "demo_phase3_ball_tube_interp: temporal refinement "
+                    << "demo_phase3_torus_tube_interp: temporal refinement "
                        "produced an infeasible frame; min_phi="
                     << refined_min_phi << "\n";
                 return 3;
@@ -1430,7 +1020,7 @@ int main(int argc, char **argv) {
                     ? 1.0
                     : static_cast<double>(stage) /
                           static_cast<double>(opts.continuation_stages - 1);
-            std::cout << "demo_phase3_ball_tube_interp: refinement_level="
+            std::cout << "demo_phase3_torus_tube_interp: refinement_level="
                       << refinement_level << "/"
                       << opts.temporal_refinement_levels
                       << " continuation_stage=" << (stage + 1) << "/"
@@ -1443,8 +1033,6 @@ int main(int argc, char **argv) {
                       << active_energy_params.tpe_barrier_weight
                       << " stage_graph_beta="
                       << active_energy_params.graph_beta
-                      << " stage_tpe_inner_weight="
-                      << active_energy_params.tpe_inner_weight
                       << " stage_sdf_guard_weight="
                       << active_energy_params.obstacle_weight
                       << " tr_radius_scale="
@@ -1454,12 +1042,11 @@ int main(int argc, char **argv) {
                     std::numeric_limits<double>::infinity();
                 for (const MeshData &m : current_frames) {
                     stage_min_phi = std::min(
-                        stage_min_phi,
-                        min_signed_distance(m, *obstacle));
+                        stage_min_phi, min_signed_distance(m, tube));
                 }
                 if (!(stage_min_phi > 0.0)) {
                     std::cerr
-                        << "demo_phase3_ball_tube_interp: skipping positive "
+                        << "demo_phase3_torus_tube_interp: skipping positive "
                            "SDF-guard continuation stage because the incoming "
                            "path is already infeasible; min_phi="
                         << stage_min_phi << "\n";
@@ -1474,17 +1061,13 @@ int main(int argc, char **argv) {
                     const std::vector<MeshData> &callback_frames) {
                     write_energy_row(
                         csv, iteration_offset + info.iteration,
-                        callback_frames, active_energy_params, *obstacle,
+                        callback_frames, active_energy_params, tube,
                         info.accepted, info.converged, info.grad_norm,
                         info.radius, info.step_norm, info.rho);
-                    if (info.accepted) {
-                        write_frame_sequence_atomic(callback_frames,
-                                                    opts.out_dir);
-                    }
                 };
 
             write_energy_row(csv, iteration_offset, current_frames,
-                             active_energy_params, *obstacle, true, false,
+                             active_energy_params, tube, true, false,
                              0.0, 0.0, 0.0, 0.0);
             result = rsh::interpolate_geodesic_trust_region(
                 current_frames, active_energy_params, tr_params);
@@ -1495,18 +1078,20 @@ int main(int argc, char **argv) {
             write_energy_row(csv,
                              iteration_offset +
                                  result.outer_iterations + 1,
-                             current_frames, active_energy_params, *obstacle,
+                             current_frames, active_energy_params, tube,
                              true, result.converged, 0.0, 0.0, 0.0, 0.0);
             iteration_offset += result.outer_iterations + 1;
         }
     }
 
-    write_frame_sequence_atomic(current_frames, opts.out_dir);
+    for (int k = 0; k < static_cast<int>(current_frames.size()); ++k) {
+        current_frames[static_cast<size_t>(k)].save_obj(
+            frame_path(opts.out_dir, k));
+    }
 
     double min_phi_min = std::numeric_limits<double>::infinity();
     for (const MeshData &m : current_frames) {
-        min_phi_min =
-            std::min(min_phi_min, min_signed_distance(m, *obstacle));
+        min_phi_min = std::min(min_phi_min, min_signed_distance(m, tube));
     }
     const bool monotone = centroid_x_monotone(current_frames);
     const double max_centroid_gap = max_centroid_x_gap(current_frames);
@@ -1520,7 +1105,19 @@ int main(int argc, char **argv) {
     const double max_membrane_strain =
         max_interior_membrane_strain(x0, current_frames,
                                      target_energy_params.shell);
-    std::cout << "demo_phase3_ball_tube_interp: "
+    double final_max_torus_radial_extent = 0.0;
+    if (current_frames.size() > 2) {
+        for (size_t k = 1; k + 1 < current_frames.size(); ++k) {
+            const MeshData &m = current_frames[k];
+            for (int v = 0; v < m.n_vertices(); ++v) {
+                const double r =
+                    std::hypot(m.V(v, 1), m.V(v, 2));
+                final_max_torus_radial_extent =
+                    std::max(final_max_torus_radial_extent, r);
+            }
+        }
+    }
+    std::cout << "demo_phase3_torus_tube_interp: "
               << "final_frames=" << current_frames.size()
               << " temporal_refinement_levels="
               << opts.temporal_refinement_levels
@@ -1541,9 +1138,16 @@ int main(int argc, char **argv) {
     std::cout << "final_centroid_gap_ok=" << (centroid_gap_ok ? 1 : 0)
               << "\n";
     std::cout << "final_max_membrane_strain=" << max_membrane_strain << "\n";
+    std::cout << "final_max_torus_radial_extent="
+              << final_max_torus_radial_extent << "\n";
     std::cout << "outputs,frames=" << opts.out_dir << "/frame_*.obj"
               << ",obstacle=" << opts.out_dir << "/obstacle.obj"
               << ",energy_csv=" << opts.out_dir << "/energy.csv\n";
 
     return (min_phi_min > 0.0 && monotone && centroid_gap_ok) ? 0 : 3;
+    } catch (const std::exception &e) {
+        std::cerr << "demo_phase3_torus_tube_interp: failed: "
+                  << e.what() << "\n";
+        return 2;
+    }
 }

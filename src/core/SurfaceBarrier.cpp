@@ -164,6 +164,63 @@ double triangle_triangle_distance_sq(const std::array<Vec3, 3> &t1,
     return best;
 }
 
+bool segment_triangle_intersects(const Vec3 &p0,
+                                 const Vec3 &p1,
+                                 const Vec3 &a,
+                                 const Vec3 &b,
+                                 const Vec3 &c) {
+    constexpr double eps = 1e-12;
+    const Vec3 dir = p1 - p0;
+    const Vec3 e1 = b - a;
+    const Vec3 e2 = c - a;
+    const Vec3 pvec = dir.cross(e2);
+    const double det = e1.dot(pvec);
+    if (std::abs(det) <= eps) {
+        return false;
+    }
+    const double inv_det = 1.0 / det;
+    const Vec3 tvec = p0 - a;
+    const double u = tvec.dot(pvec) * inv_det;
+    if (u < -eps || u > 1.0 + eps) {
+        return false;
+    }
+    const Vec3 qvec = tvec.cross(e1);
+    const double v = dir.dot(qvec) * inv_det;
+    if (v < -eps || u + v > 1.0 + eps) {
+        return false;
+    }
+    const double t = e2.dot(qvec) * inv_det;
+    return t >= -eps && t <= 1.0 + eps;
+}
+
+bool triangles_intersect(const std::array<Vec3, 3> &t1,
+                         const std::array<Vec3, 3> &t2) {
+    constexpr double eps = 1e-12;
+    if (triangle_triangle_distance_sq(t1, t2) <= eps * eps) {
+        return true;
+    }
+    for (int i = 0; i < 3; ++i) {
+        const Vec3 &a = t1[i];
+        const Vec3 &b = t1[(i + 1) % 3];
+        if (segment_triangle_intersects(a, b, t2[0], t2[1], t2[2])) {
+            return true;
+        }
+    }
+    for (int i = 0; i < 3; ++i) {
+        const Vec3 &a = t2[i];
+        const Vec3 &b = t2[(i + 1) % 3];
+        if (segment_triangle_intersects(a, b, t1[0], t1[1], t1[2])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::array<Vec3, 3> face_triangle(const MeshData &mesh, int t) {
+    return {face_vertex(mesh, t, 0), face_vertex(mesh, t, 1),
+            face_vertex(mesh, t, 2)};
+}
+
 SubTriState root_subtri() {
     SubTriState out;
     out.bary = {Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0),
@@ -223,7 +280,13 @@ void append_adaptive_terms_for_cross_face_pair(
     int tm,
     int tb,
     const TpeAdaptiveParams &adaptive,
+    std::size_t max_total_terms,
     std::vector<TpeNearFieldTerm> &terms) {
+    auto emit_capped = [&](const SubTriState &moving,
+                           const SubTriState &barrier_state) {
+        emit_subtri_term(terms, tm, tb, moving, barrier_state);
+    };
+
     const std::array<Vec3, 3> parent_m = {
         face_vertex(mesh, tm, 0), face_vertex(mesh, tm, 1),
         face_vertex(mesh, tm, 2)};
@@ -238,6 +301,7 @@ void append_adaptive_terms_for_cross_face_pair(
     std::vector<AdaptivePairItem> stack;
     stack.reserve(128);
     stack.push_back({root_subtri(), root_subtri()});
+    const std::size_t pair_term_start = terms.size();
 
     while (!stack.empty()) {
         const AdaptivePairItem item = stack.back();
@@ -257,8 +321,11 @@ void append_adaptive_terms_for_cross_face_pair(
         const bool depth_cap = item.moving.depth >= max_depth;
         const bool stack_cap =
             static_cast<int>(stack.size()) + 16 > max_stack_items;
-        if (mac_ok || depth_cap || stack_cap) {
-            emit_subtri_term(terms, tm, tb, item.moving, item.barrier);
+        const bool total_cap =
+            (terms.size() - pair_term_start) + stack.size() + 16 >
+            max_total_terms;
+        if (mac_ok || depth_cap || stack_cap || total_cap) {
+            emit_capped(item.moving, item.barrier);
             continue;
         }
 
@@ -758,9 +825,46 @@ void accumulate_adaptive_nearfield_gradient(
 
 } // namespace
 
+bool surface_tpe_barrier_intersects(const MeshData &mesh,
+                                    const MeshData &barrier) {
+    for (int tm = 0; tm < mesh.n_faces(); ++tm) {
+        const std::array<Vec3, 3> tri_m = face_triangle(mesh, tm);
+        for (int tb = 0; tb < barrier.n_faces(); ++tb) {
+            if (triangles_intersect(tri_m, face_triangle(barrier, tb))) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool surface_tpe_barrier_intersects(const MeshData &mesh,
+                                    const MeshData &barrier,
+                                    const SurfaceBarrierCache &cache) {
+    for (const ClusterPair &cp : cache.bp.near_field) {
+        const BVHNode &U = cache.moving_bvh.nodes[cp.u];
+        const BVHNode &V = cache.barrier_bvh.nodes[cp.v];
+        for (int i = U.face_start; i < U.face_end; ++i) {
+            const int tm = cache.moving_bvh.face_indices[i];
+            const std::array<Vec3, 3> tri_m = face_triangle(mesh, tm);
+            for (int j = V.face_start; j < V.face_end; ++j) {
+                const int tb = cache.barrier_bvh.face_indices[j];
+                if (triangles_intersect(
+                        tri_m, face_triangle(barrier, tb))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 double surface_tpe_barrier_energy(const MeshData &mesh,
                                   const MeshData &barrier,
                                   double alpha) {
+    if (surface_tpe_barrier_intersects(mesh, barrier)) {
+        return std::numeric_limits<double>::infinity();
+    }
     const FaceGeom gm = compute_face_geom(mesh);
     const FaceGeom gb = compute_face_geom(barrier);
     double phi = 0.0;
@@ -782,6 +886,9 @@ double surface_tpe_barrier_energy(const MeshData &mesh,
 Eigen::MatrixXd surface_tpe_barrier_gradient(const MeshData &mesh,
                                              const MeshData &barrier,
                                              double alpha) {
+    if (surface_tpe_barrier_intersects(mesh, barrier)) {
+        return Eigen::MatrixXd::Zero(mesh.n_vertices(), 3);
+    }
     const FaceGeom gm = compute_face_geom(mesh);
     const FaceGeom gb = compute_face_geom(barrier);
     const std::vector<std::array<Vec3, 3>> E =
@@ -816,6 +923,8 @@ SurfaceBarrierCache build_surface_tpe_barrier_cache(
         out.adaptive.max_depth = std::max(0, adaptive.max_depth);
         out.adaptive.max_stack_items =
             std::max(16, adaptive.max_stack_items);
+        out.adaptive.max_total_terms =
+            std::max<std::size_t>(16, adaptive.max_total_terms);
         for (const ClusterPair &cp : out.bp.near_field) {
             const BVHNode &U = out.moving_bvh.nodes[cp.u];
             const BVHNode &V = out.barrier_bvh.nodes[cp.v];
@@ -825,6 +934,7 @@ SurfaceBarrierCache build_surface_tpe_barrier_cache(
                     const int tb = out.barrier_bvh.face_indices[j];
                     append_adaptive_terms_for_cross_face_pair(
                         mesh, barrier, tm, tb, out.adaptive,
+                        out.adaptive.max_total_terms,
                         out.near_terms);
                 }
             }
@@ -839,6 +949,9 @@ double surface_tpe_barrier_energy_bh(
     const MeshData &barrier,
     const SurfaceBarrierCache &cache,
     double alpha) {
+    if (surface_tpe_barrier_intersects(mesh, barrier, cache)) {
+        return std::numeric_limits<double>::infinity();
+    }
     const FaceGeom gm = compute_face_geom(mesh);
     BVH moving_bvh = cache.moving_bvh;
     update_bvh_aggregates(moving_bvh, gm);
@@ -859,6 +972,9 @@ Eigen::MatrixXd surface_tpe_barrier_gradient_bh(
     const MeshData &barrier,
     const SurfaceBarrierCache &cache,
     double alpha) {
+    if (surface_tpe_barrier_intersects(mesh, barrier, cache)) {
+        return Eigen::MatrixXd::Zero(mesh.n_vertices(), 3);
+    }
     const FaceGeom gm = compute_face_geom(mesh);
     BVH moving_bvh = cache.moving_bvh;
     update_bvh_aggregates(moving_bvh, gm);

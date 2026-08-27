@@ -26,6 +26,18 @@ struct SurfaceBarrierCache {
 // Fixed-surface tangent-point barrier used for RS-style obstacles. This is the
 // cross term between a moving shell and a fixed obstacle surface, symmetrized
 // over both source normals as in the ordered TPE sum on a union of surfaces.
+//
+// Adaptive midpoint quadrature is still finite at a capped subdivision depth.
+// To preserve the intended infinite barrier at actual surface intersections,
+// the energy routines below return +inf when a moving triangle intersects a
+// fixed obstacle triangle.
+bool surface_tpe_barrier_intersects(const MeshData &mesh,
+                                    const MeshData &barrier);
+
+bool surface_tpe_barrier_intersects(const MeshData &mesh,
+                                    const MeshData &barrier,
+                                    const SurfaceBarrierCache &cache);
+
 double surface_tpe_barrier_energy(const MeshData &mesh,
                                   const MeshData &barrier,
                                   double alpha = 6.0);

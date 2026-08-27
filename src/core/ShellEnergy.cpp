@@ -462,7 +462,8 @@ ScalarDerivatives hinge_weight_derivatives(
         return out;
     }
 
-    const double coef = std::pow(params.thickness, 3.0);
+    const double coef =
+        params.bending_weight * std::pow(params.thickness, 3.0);
     out.value = coef * l2.value / area.value;
     out.grad = coef *
         (l2.grad / area.value -
@@ -887,7 +888,7 @@ AD2 membrane_local_energy_ad(const MeshData &x_ref,
         0.25 * (2.0 * params.mu + params.lambda) * ad_log(detA) -
         params.mu - 0.25 * params.lambda;
     const AD2 area = triangle_area_ad(r0, r1, r2);
-    return params.thickness * area * density;
+    return params.membrane_weight * params.thickness * area * density;
 }
 
 void scatter_local_gradient(const std::vector<LocalDof> &dofs,
@@ -954,7 +955,8 @@ double bending_energy_only(const MeshData &x_ref,
             val_def = 2.0 * std::tan(0.5 * std::min(theta_def, clamp_hi));
         }
         const double diff = val_def - val_ref;
-        wb += std::pow(params.thickness, 3.0) * diff * diff * ell * ell / area_e;
+        wb += params.bending_weight * std::pow(params.thickness, 3.0) *
+              diff * diff * ell * ell / area_e;
     }
     return wb;
 }
@@ -983,7 +985,8 @@ void accumulate_membrane_gradient(const MeshData &x_ref,
             0.5 * (dW_dIref_raw + dW_dIref_raw.transpose());
         const Mat32 dW_dJref = 2.0 * tf.J_ref * dW_dIref;
 
-        const double scale = params.thickness * tf.area_ref;
+        const double scale =
+            params.membrane_weight * params.thickness * tf.area_ref;
         const int i = x_ref.F(f, 0);
         const int j = x_ref.F(f, 1);
         const int k = x_ref.F(f, 2);
@@ -1011,9 +1014,15 @@ void accumulate_membrane_gradient(const MeshData &x_ref,
         Vec3 E0, E1, E2;
         opposite_edges(vr0, vr1, vr2, E0, E1, E2);
         const double w = membrane_density(A, params);
-        grad_ref.row(i) += (params.thickness * w) * da_dvk(nr, E0);
-        grad_ref.row(j) += (params.thickness * w) * da_dvk(nr, E1);
-        grad_ref.row(k) += (params.thickness * w) * da_dvk(nr, E2);
+        grad_ref.row(i) +=
+            (params.membrane_weight * params.thickness * w) *
+            da_dvk(nr, E0);
+        grad_ref.row(j) +=
+            (params.membrane_weight * params.thickness * w) *
+            da_dvk(nr, E1);
+        grad_ref.row(k) +=
+            (params.membrane_weight * params.thickness * w) *
+            da_dvk(nr, E2);
     }
 }
 
@@ -1124,7 +1133,8 @@ ShellEnergyValue shell_energy(const MeshData &x_ref,
     for (const TriFrame &tf : frames) {
         if (!(tf.area_ref > 0.0)) continue;
         const Mat2 A = tf.I_ref.inverse() * tf.I_def;
-        out.membrane += params.thickness * tf.area_ref * membrane_density(A, params);
+        out.membrane += params.membrane_weight * params.thickness *
+                        tf.area_ref * membrane_density(A, params);
     }
 
     const std::vector<BendingEdge> edges = build_interior_edges(x_ref);
@@ -1148,7 +1158,8 @@ ShellEnergyGradientResult shell_energy_with_gradient(
         if (!(tf.area_ref > 0.0)) continue;
         const Mat2 A = tf.I_ref.inverse() * tf.I_def;
         out.energy.membrane +=
-            params.thickness * tf.area_ref * membrane_density(A, params);
+            params.membrane_weight * params.thickness *
+            tf.area_ref * membrane_density(A, params);
     }
     accumulate_membrane_gradient(
         x_ref, x_def, frames, params, out.grad_ref, out.grad_def);
