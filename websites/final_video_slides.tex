@@ -28,7 +28,7 @@
 \setbeamercolor{normal text}{fg=Text,bg=Bg}
 
 \newcommand{\decklabel}[1]{%
-  {\fontsize{8.5}{11}\selectfont\color{Label}\MakeUppercase{#1}}%
+  {\fontsize{8.5}{11}\selectfont\color{Label}\MakeUppercase{#1}\par}%
 }
 \newcommand{\slidetitle}[1]{%
   {\fontsize{25}{30}\selectfont\color{Text}\raggedright #1\par}%
@@ -39,16 +39,24 @@
 \newcommand{\smallbody}[1]{%
   {\fontsize{9.5}{12}\selectfont\color{Dim}\raggedright #1\par}%
 }
+\newcommand{\steplabel}[1]{%
+  {\fontsize{9}{11}\selectfont\color{Text}#1\par}%
+}
+\newcommand{\stepbody}[1]{%
+  {\fontsize{9.5}{12.0}\selectfont\color{Dim}\raggedright #1\par}%
+}
 \newcommand{\tinynote}[1]{%
   {\fontsize{8.5}{10}\selectfont\color{Label}#1\par}%
 }
 \newcommand{\thinrule}{%
-  \vspace{0.24cm}\textcolor{Rule}{\rule{2.45cm}{0.35pt}}\vspace{0.25cm}%
+  \par\vspace{0.24cm}%
+  {\color{Rule}\rule{2.45cm}{0.35pt}}%
+  \par\vspace{0.25cm}%
 }
 
 \begin{document}
 
-% Voiceover target: 0:00--0:12
+% Voiceover target: 0:00--0:10
 \begin{frame}[plain]
   \vspace*{0.72cm}
   \hspace*{1.22cm}
@@ -59,9 +67,7 @@
 
     {\fontsize{37}{44}\selectfont\color{Text}Limitless: Infinity\par}
     \vspace{0.25cm}
-    {\fontsize{15.6}{20}\selectfont\color{Dim}Repulsive surface optimization for collision-free shape paths.\par}
-    \vspace{0.1cm}
-    {\fontsize{15.6}{20}\selectfont\color{Dim}From canonical embeddings to a ball-through-tube demo.\par}
+    {\fontsize{15.6}{20}\selectfont\color{Dim}Repulsive-surface optimization for self-intersection-free meshes.\par}
     \vspace{0.46cm}
     \textcolor{Rule}{\rule{2.45cm}{0.35pt}}
     \vspace{0.26cm}
@@ -73,176 +79,137 @@
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 0:12--0:27
+% Voiceover target: 0:10--0:30
 \begin{frame}[plain]
   \vspace*{0.82cm}
   \hspace*{1.22cm}
   \begin{minipage}{0.78\paperwidth}
   \raggedright
-  \decklabel{01 -- Goal}\par
+  \decklabel{01 -- The goal}
   \vspace{0.54cm}
-  \slidetitle{Collision-free motion, without collision detection.}
+  \slidetitle{Blend 3D shapes without them passing through themselves.}
   \thinrule
-  \slidebody{The original Repulsive Shells paper asks for shape operations that do not pass through themselves. Instead of detecting collisions after they happen, it builds repulsion directly into the metric.}
-  \vspace{0.35cm}
-  \slidebody{For the final project, we implemented the Repulsive Surfaces machinery underneath that idea, then used the shell/path layer for one focused interpolation demo.}
+  \slidebody{Rather than detect collisions and resolve them, we encode repulsion in the energy itself. The energy is finite for any embedded surface and infinite the moment two patches meet, so starting from an embedded surface the optimizer cannot cross into a self-intersection.}
+  \vspace{0.30cm}
+  \slidebody{We descoped GPU acceleration after the milestone; everything in this video runs on CPU.}
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 0:27--0:43
+% Voiceover target: 0:30--0:48
 \begin{frame}[plain]
   \vspace*{0.82cm}
   \hspace*{1.22cm}
   \begin{minipage}{0.78\paperwidth}
   \raggedright
-  \decklabel{02 -- Core energy}\par
+  \decklabel{02 -- The energy}
   \vspace{0.54cm}
-  \slidetitle{An energy that becomes infinite at self-contact.}
+  \slidetitle{Infinite at self-contact.}
   \thinrule
-  \slidebody{Our discrete tangent-point energy sums a kernel over triangle pairs. If two distant patches approach zero separation, the kernel diverges.}
-  \vspace{0.35cm}
-  {\fontsize{10.5}{12.5}\selectfont\color{Dim}
-  \[
+  \slidebody{The discrete tangent-point energy sums a kernel over triangle pairs. As two patches approach zero separation, the denominator vanishes and the kernel diverges.}
+  \vspace{0.45cm}
+  \begin{center}
+  {\fontsize{12}{14}\selectfont\color{Text}
+  $\displaystyle
     \widehat{\Phi}(x)
       = \sum_{t_1 \ne t_2}
-        a_1 a_2
-        \frac{|\langle n_1, c_1 - c_2\rangle|^6}
+        a_1 a_2 \,
+        \frac{\bigl|\langle n_1,\, c_1 - c_2\rangle\bigr|^{6}}
              {\|c_1 - c_2\|^{12}}
-  \]
+  $%
   }
+  \end{center}
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 0:43--0:58
+% Voiceover target: 0:48--1:10
 \begin{frame}[plain]
-  \vspace*{0.82cm}
+  \vspace*{0.45cm}
   \hspace*{1.22cm}
-  \begin{minipage}{0.78\paperwidth}
+  \begin{minipage}{0.82\paperwidth}
   \raggedright
-  \decklabel{03 -- What we built}\par
-  \vspace{0.54cm}
-  \slidetitle{From paper formula to a working optimizer.}
-  \thinrule
-  \slidebody{The pipeline computes face geometry and analytical gradients, accelerates TPE with a BVH and block-cluster tree, solves for Sobolev-preconditioned descent directions, and remeshes dynamically as the surface changes.}
-  \vspace{0.55cm}
-  {\fontsize{10.3}{13}\selectfont\color{Dim}\raggedright
-  mesh $\rightarrow$ face geometry $\rightarrow$ TPE/BVH/BCT $\rightarrow$ preconditioned direction $\rightarrow$ line search $\rightarrow$ remesh
-  \par}
+  \decklabel{03 -- The pipeline}
+  \vspace{0.10cm}
+  \slidetitle{Four steps, run every iteration.}
+  \vspace{0.14cm}
+
+  \renewcommand{\arraystretch}{1.05}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}p{2.9cm}p{9.7cm}@{}}
+    \steplabel{1.\ Geometry} &
+    \stepbody{Per-triangle centers, normals, and areas.} \\
+    \steplabel{2.\ Fast energy} &
+    \stepbody{Hierarchical clustering turns an O(n\textsuperscript{2}) sum into O(n log n).} \\
+    \steplabel{3.\ Smooth descent} &
+    \stepbody{A Sobolev-style preconditioner makes step size independent of mesh resolution.} \\
+    \steplabel{4.\ Remeshing} &
+    \stepbody{Edges split, collapse, and smooth so mesh quality stays controlled.} \\
+  \end{tabular}
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 0:58--1:18
-\begin{frame}[plain]
-  \vspace*{0.42cm}
-  \hspace*{0.72cm}
-  \begin{minipage}{0.88\paperwidth}
-    \raggedright
-    \decklabel{04 -- Canonical embeddings}\par
-    \vspace{0.18cm}
-    \slidetitle{Canonical embeddings.}
-    \vspace{0.18cm}
-    \renewcommand{\arraystretch}{0.82}
-    \begin{tabular}{@{}ccc@{}}
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus0_final.png} &
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus1_final.png} &
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus2_final.png} \\
-      \tinynote{genus 0} & \tinynote{genus 1} & \tinynote{genus 2} \\
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus3_final.png} &
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus4_final.png} &
-      \includegraphics[width=0.165\paperwidth]{final_assets/gallery_genus5_final.png} \\
-      \tinynote{genus 3} & \tinynote{genus 4} & \tinynote{genus 5}
-    \end{tabular}
-  \end{minipage}
-\end{frame}
-
-% Voiceover target: 1:18--1:33
+% Voiceover target: 1:10--1:35
 \begin{frame}[plain]
   \vspace*{0.58cm}
   \hspace*{0.94cm}
   \begin{minipage}{0.84\paperwidth}
     \raggedright
-    \decklabel{05 -- Quantitative result}\par
+    \decklabel{04 -- Canonical embeddings}
     \vspace{0.24cm}
-    \slidetitle{The energy drops at every genus.}
-    \vspace{0.24cm}
+    \slidetitle{Six surfaces flow toward embedded states.}
+    \vspace{0.28cm}
     \begin{columns}[T,totalwidth=0.84\paperwidth]
       \begin{column}{0.49\paperwidth}
         \includegraphics[width=\linewidth]{final_assets/gallery_energy_normalized.png}
       \end{column}
       \begin{column}{0.30\paperwidth}
-        \smallbody{Six 500-iteration runs with dynamic remeshing.}
-        \vspace{0.20cm}
-        \smallbody{Representative drops: genus 0 falls by 7473x; genus 5 falls by 99.6x.}
-        \vspace{0.20cm}
-        \smallbody{Repulsor all-pairs parity stayed within floating-point tolerance on final meshes.}
+        \smallbody{Tangent-point energy, normalized by the starting value, over 500 iterations on genus 0 through 5.}
+        \vspace{0.22cm}
+        \smallbody{Genus 0 collapses fastest because a sphere is the global minimum. Higher genera plateau into local minima with handles intact.}
+        \vspace{0.22cm}
+        \smallbody{Genus 1 is the stubborn case: starting near a torus of revolution leaves little energy to shed.}
       \end{column}
     \end{columns}
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 1:33--1:50
+% Voiceover target: 1:35--2:00
 \begin{frame}[plain]
   \vspace*{0.58cm}
   \hspace*{0.94cm}
   \begin{minipage}{0.84\paperwidth}
     \raggedright
-    \decklabel{06 -- Shape path}\par
+    \decklabel{05 -- Sphere through a tube}
     \vspace{0.24cm}
-    \slidetitle{A sphere squeezes through a narrow tube.}
-    \vspace{0.24cm}
-    \begin{columns}[T,totalwidth=0.84\paperwidth]
-      \begin{column}{0.50\paperwidth}
-        \includegraphics[width=\linewidth]{final_assets/ball_tube_mid_crop.png}
-      \end{column}
-      \begin{column}{0.30\paperwidth}
-        \smallbody{We optimized a 30-frame path with fixed endpoints.}
-        \vspace{0.20cm}
-        \smallbody{The objective combines shell energy, self TPE, a fixed tube-surface TPE barrier, and a small SDF guard.}
-        \vspace{0.20cm}
-        \smallbody{Final minimum tube clearance: 0.0213.}
-      \end{column}
-    \end{columns}
-  \end{minipage}
-\end{frame}
-
-% Voiceover target: 1:50--2:05
-\begin{frame}[plain]
-  \vspace*{0.58cm}
-  \hspace*{0.94cm}
-  \begin{minipage}{0.84\paperwidth}
-    \raggedright
-    \decklabel{07 -- Robustness}\par
-    \vspace{0.24cm}
-    \slidetitle{The hard part was numerical discipline.}
-    \vspace{0.24cm}
+    \slidetitle{A 30-frame collision-free path.}
+    \vspace{0.28cm}
     \begin{columns}[T,totalwidth=0.84\paperwidth]
       \begin{column}{0.49\paperwidth}
         \includegraphics[width=\linewidth]{final_assets/ball_tube_energy.png}
       \end{column}
       \begin{column}{0.30\paperwidth}
-        \smallbody{Finite-difference gradient checks caught sign errors.}
-        \vspace{0.20cm}
-        \smallbody{Repulsor parity caught kernel-bias mistakes that internal tests could not.}
-        \vspace{0.20cm}
-        \smallbody{Deterministic reductions and remeshing budgets made outputs reproducible.}
+        \smallbody{Trust-region descent on a path with fixed endpoints. The objective combines shell elasticity, self-repulsion, and a repulsive barrier from the tube surface.}
+        \vspace{0.22cm}
+        \smallbody{The path's self-repulsion term drops by two orders of magnitude in the first five iterations.}
+        \vspace{0.22cm}
+        \smallbody{The sphere stays clear of the tube wall for the full sequence.}
       \end{column}
     \end{columns}
   \end{minipage}
 \end{frame}
 
-% Voiceover target: 2:05--2:15
+% Voiceover target: 2:00--2:15
 \begin{frame}[plain]
   \vspace*{0.82cm}
   \hspace*{1.22cm}
   \begin{minipage}{0.78\paperwidth}
   \raggedright
-  \decklabel{08 -- Takeaway}\par
+  \decklabel{06 -- Takeaway}
   \vspace{0.54cm}
-  \slidetitle{A working repulsive-surface pipeline.}
+  \slidetitle{A working repulsive-surface optimizer.}
   \thinrule
-  \slidebody{We did not finish the full GPU Repulsive Shells system, but we built the CPU core it depends on: fast TPE, preconditioned descent, remeshing, validation, and a shape-path demo.}
-  \vspace{0.35cm}
-  \slidebody{The final result is a reproducible system for generating embedded surfaces and collision-aware interpolation examples from saved mesh sequences.}
+  \slidebody{We built the CPU core the full Repulsive Shells system depends on: fast tangent-point energy, preconditioned descent, dynamic remeshing, and a cross-validation harness against an external reference implementation.}
+  \vspace{0.30cm}
+  \slidebody{On top of that core, the graph-manifold path solver produced a collision-free sphere-through-tube interpolation. The pipeline is reproducible end-to-end from a saved frame sequence.}
   \end{minipage}
 \end{frame}
 

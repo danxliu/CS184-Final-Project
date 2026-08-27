@@ -91,10 +91,23 @@
                 margin: 1rem 0;
                 padding: 0.65rem;
             }
-            .video-block video {
+            .video-block video,
+            .video-block iframe {
+                border: 0;
                 border-radius: 2px;
                 display: block;
                 width: 100%;
+            }
+            .video-block .video-aspect {
+                aspect-ratio: 16 / 9;
+                position: relative;
+                width: 100%;
+            }
+            .video-block .video-aspect iframe {
+                height: 100%;
+                left: 0;
+                position: absolute;
+                top: 0;
             }
             .caption {
                 color: var(--text-dim);
@@ -116,9 +129,7 @@
             <div class="hero-label">CS 184 · Spring 2026 · Final Video</div>
             <h1>Limitless: Infinity</h1>
             <p>
-                Final video materials for our repulsive-surface optimization
-                project, including the rendered result clips and the narrated
-                slide deck.
+                Final video for our repulsive-surface optimization project.
             </p>
             <div class="links">
                 <a href="https://coherentmonkey.github.io/184/project/"
@@ -130,53 +141,21 @@
                 <a href="https://coherentmonkey.github.io/184/project/final_video_slides.pdf"
                     >Slide PDF</a
                 >
-                <a href="https://coherentmonkey.github.io/184/project/final_video_script.md"
-                    >Voiceover script</a
-                >
             </div>
         </header>
 
         <main class="content">
             <section>
-                <h2>Showcase Clips</h2>
                 <div class="video-block">
-                    <video controls muted playsinline preload="metadata">
-                        <source
-                            src="final_assets/gallery_descent.mp4"
-                            type="video/mp4"
-                        />
-                    </video>
-                    <div class="caption">
-                        Canonical embedding gallery: genus 0 through genus 5
-                        optimized with tangent-point energy descent.
+                    <div class="video-aspect">
+                        <iframe
+                            src="https://drive.google.com/file/d/1VGich2iXyhmbPlMaogWFNm0vG7nxZK40/preview"
+                            allow="autoplay"
+                            allowfullscreen
+                            title="Limitless: Infinity final presentation video"
+                        ></iframe>
                     </div>
                 </div>
-                <div class="video-block">
-                    <video controls muted playsinline preload="metadata">
-                        <source
-                            src="final_assets/ball_tube_interp.mp4"
-                            type="video/mp4"
-                        />
-                    </video>
-                    <div class="caption">
-                        Thirty-frame sphere-through-tube interpolation with a
-                        fixed tube-surface repulsive barrier.
-                    </div>
-                </div>
-            </section>
-
-            <section>
-                <h2>Narration Materials</h2>
-                <p>
-                    The final video voiceover is structured around the
-                    <a href="https://coherentmonkey.github.io/184/project/final_video_slides.pdf"
-                        >Beamer slide deck</a
-                    >
-                    and
-                    <a href="https://coherentmonkey.github.io/184/project/final_video_script.md"
-                        >three-speaker script</a
-                    >.
-                </p>
             </section>
         </main>
     </body>
